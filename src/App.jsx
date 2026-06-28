@@ -282,7 +282,7 @@ function ResearchPage({config}){
           const thumb=v.snippet?.thumbnails?.medium?.url;
           const score=parseFloat(v.score);
           return(
-            <div key={v.id} className="vc">
+            <div key={v.id} className="vc" onClick={()=>window.open(`https://youtube.com/watch?v=${v.id}`,'_blank')}>
               <div className="vt">{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
               <div className="vi">
                 <div className="vtit">{v.snippet?.title}</div>
@@ -290,6 +290,10 @@ function ResearchPage({config}){
                 <div className="srow">
                   <div><div style={{fontSize:18,fontWeight:700}}>{formatNumber(v.views)}</div><div style={{fontSize:11,color:C.muted}}>vistas</div></div>
                   <div><div style={{fontSize:18,fontWeight:700,color:score>10?C.gold:C.acc}}>{score}x</div><div style={{fontSize:11,color:C.muted}}>outlier</div></div>
+                </div>
+                <div style={{display:"flex",gap:6,marginTop:8}}>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={e=>{e.stopPropagation();window.open(`https://youtube.com/watch?v=${v.id}`,'_blank');}}>▶ Ver</button>
+                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={e=>{e.stopPropagation();navigator.clipboard.writeText(`https://youtube.com/watch?v=${v.id}`);alert('URL copiada — pégala en Analizar Video');}}>🎯 Copiar URL</button>
                 </div>
               </div>
             </div>
