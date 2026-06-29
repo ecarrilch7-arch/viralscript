@@ -23,8 +23,7 @@ async function searchYouTube(query, config, filters = {}) {
   const params = new URLSearchParams({ part: "snippet", q: query, type: "video", maxResults: 20, key: config.youtubeKey, relevanceLanguage: filters.language || "es", videoDuration: filters.duration || "any", order: "viewCount" });
   const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`);
   if (!res.ok) throw new Error("Error con la API de YouTube.");
-  const data = await res.json();
-  return data.items || [];
+  return (await res.json()).items || [];
 }
 async function getVideoStats(videoIds, config) {
   const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails,snippet&id=${videoIds.join(",")}&key=${config.youtubeKey}`);
@@ -87,71 +86,81 @@ const C = {
 const css=`
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:${C.bg};color:${C.txt};font-family:'Inter',sans-serif;min-height:100vh;}
+body{background:#0a0a0f;color:#e8e8f0;font-family:'Inter',sans-serif;min-height:100vh;}
 .app{display:flex;min-height:100vh;}
-.sidebar{width:220px;min-height:100vh;background:${C.surf};border-right:1px solid ${C.bord};display:flex;flex-direction:column;padding:24px 0;position:fixed;top:0;left:0;z-index:100;}
-.slogo{padding:0 20px 28px;border-bottom:1px solid ${C.bord};margin-bottom:16px;}
+.sidebar{width:220px;min-height:100vh;background:#111118;border-right:1px solid #222230;display:flex;flex-direction:column;padding:24px 0;position:fixed;top:0;left:0;z-index:100;}
+.slogo{padding:0 20px 28px;border-bottom:1px solid #222230;margin-bottom:16px;}
 .ltxt{font-family:'Syne',sans-serif;font-size:20px;font-weight:800;letter-spacing:-0.5px;}
-.lacc{color:${C.acc};}
-.lsub{font-size:11px;color:${C.muted};margin-top:2px;letter-spacing:0.5px;}
-.nitem{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:13.5px;font-weight:500;color:${C.muted};transition:all 0.15s;border-left:3px solid transparent;margin:1px 0;}
-.nitem:hover,.nitem.active{background:${C.accS};color:${C.txt};border-left-color:${C.acc};}
+.lacc{color:#6c3fff;}
+.lsub{font-size:11px;color:#7878a0;margin-top:2px;letter-spacing:0.5px;}
+.nitem{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:13.5px;font-weight:500;color:#7878a0;transition:all 0.15s;border-left:3px solid transparent;margin:1px 0;}
+.nitem:hover,.nitem.active{background:#6c3fff22;color:#e8e8f0;border-left-color:#6c3fff;}
 .main{margin-left:220px;flex:1;padding:32px 36px;min-height:100vh;}
 .ptitle{font-family:'Syne',sans-serif;font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px;}
-.psub{color:${C.muted};font-size:14px;margin-bottom:28px;}
-.card{background:${C.card};border:1px solid ${C.bord};border-radius:12px;padding:20px;margin-bottom:16px;transition:border-color 0.2s;}
-.card:hover{border-color:${C.acc};}
-.lbl{font-size:12px;font-weight:600;color:${C.muted};text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:block;}
-.inp{width:100%;background:${C.surf};border:1px solid ${C.bord};border-radius:8px;padding:10px 14px;color:${C.txt};font-size:14px;font-family:'Inter',sans-serif;outline:none;transition:border-color 0.15s;}
-.inp:focus{border-color:${C.acc};}
-.inp::placeholder{color:${C.dim};}
+.psub{color:#7878a0;font-size:14px;margin-bottom:28px;}
+.card{background:#16161f;border:1px solid #222230;border-radius:12px;padding:20px;margin-bottom:16px;transition:border-color 0.2s;}
+.card:hover{border-color:#6c3fff;}
+.lbl{font-size:12px;font-weight:600;color:#7878a0;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:block;}
+.inp{width:100%;background:#111118;border:1px solid #222230;border-radius:8px;padding:10px 14px;color:#e8e8f0;font-size:14px;font-family:'Inter',sans-serif;outline:none;transition:border-color 0.15s;}
+.inp:focus{border-color:#6c3fff;}
+.inp::placeholder{color:#4a4a6a;}
 .btn{padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all 0.15s;font-family:'Inter',sans-serif;display:inline-flex;align-items:center;gap:8px;}
-.bp{background:${C.acc};color:white;}.bp:hover{background:${C.accH};}.bp:disabled{opacity:0.4;cursor:not-allowed;}
-.bs{background:${C.tag};color:${C.txt};border:1px solid ${C.bord};}.bs:hover{border-color:${C.acc};}
-.bg{background:${C.gold};color:#0a0a0f;}.bg:hover{background:#f5c842;}
+.bp{background:#6c3fff;color:white;}.bp:hover{background:#8b5fff;}.bp:disabled{opacity:0.4;cursor:not-allowed;}
+.bs{background:#1e1e2e;color:#e8e8f0;border:1px solid #222230;}.bs:hover{border-color:#6c3fff;}
+.bg{background:#f0b429;color:#0a0a0f;}.bg:hover{background:#f5c842;}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
-.tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${C.tag};color:${C.muted};border:1px solid ${C.bord};}
-.ta{background:${C.accS};color:${C.acc};border-color:${C.acc}44;}
-.tg{background:${C.goldS};color:${C.gold};border-color:${C.gold}44;}
-.tok{background:#22c55e22;color:${C.ok};border-color:#22c55e44;}
+.tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:#1e1e2e;color:#7878a0;border:1px solid #222230;}
+.ta{background:#6c3fff22;color:#6c3fff;border-color:#6c3fff44;}
+.tg{background:#f0b42922;color:#f0b429;border-color:#f0b42944;}
+.tok{background:#22c55e22;color:#22c55e;border-color:#22c55e44;}
 .srow{display:flex;gap:20px;flex-wrap:wrap;margin:10px 0;}
-.sc{background:${C.surf};border:1px solid ${C.bord};border-radius:10px;padding:16px;margin-bottom:12px;}
+.sc{background:#111118;border:1px solid #222230;border-radius:10px;padding:16px;margin-bottom:12px;}
 .sh{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
-.sn{width:28px;height:28px;background:${C.acc};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:white;flex-shrink:0;}
-.stxt{background:${C.bg};border-radius:8px;padding:12px;font-size:14px;line-height:1.6;color:${C.txt};margin-bottom:10px;white-space:pre-wrap;}
-.pbox{background:#0d1117;border:1px dashed ${C.bord};border-radius:8px;padding:10px 12px;font-size:12px;color:${C.muted};font-family:monospace;line-height:1.5;margin-bottom:8px;}
+.sn{width:28px;height:28px;background:#6c3fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:white;flex-shrink:0;}
+.stxt{background:#0a0a0f;border-radius:8px;padding:12px;font-size:14px;line-height:1.6;color:#e8e8f0;margin-bottom:10px;white-space:pre-wrap;}
+.pbox{background:#0d1117;border:1px dashed #222230;border-radius:8px;padding:10px 12px;font-size:12px;color:#7878a0;font-family:monospace;line-height:1.5;margin-bottom:8px;}
 .alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
 .aerr{background:#ef444420;border:1px solid #ef444444;color:#fca5a5;}
 .aok{background:#22c55e20;border:1px solid #22c55e44;color:#86efac;}
-.ainf{background:${C.accS};border:1px solid ${C.acc}44;color:#a78bfa;}
-.loader{display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px;color:${C.muted};font-size:14px;}
-.spin{width:36px;height:36px;border:3px solid ${C.bord};border-top-color:${C.acc};border-radius:50%;animation:spin 0.8s linear infinite;}
+.ainf{background:#6c3fff22;border:1px solid #6c3fff44;color:#a78bfa;}
+.loader{display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px;color:#7878a0;font-size:14px;}
+.spin{width:36px;height:36px;border:3px solid #222230;border-top-color:#6c3fff;border-radius:50%;animation:spin 0.8s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
-.vc{background:${C.card};border:1px solid ${C.bord};border-radius:10px;overflow:hidden;cursor:pointer;transition:all 0.2s;}
-.vc:hover{border-color:${C.acc};transform:translateY(-2px);}
-.vt{position:relative;aspect-ratio:16/9;background:${C.surf};overflow:hidden;}
+.vc{background:#16161f;border:1px solid #222230;border-radius:10px;overflow:hidden;cursor:pointer;transition:all 0.2s;}
+.vc:hover{border-color:#6c3fff;transform:translateY(-2px);}
+.vt{position:relative;aspect-ratio:16/9;background:#111118;overflow:hidden;}
 .vt img{width:100%;height:100%;object-fit:cover;}
 .vd{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.85);color:white;font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;}
-.ob{position:absolute;top:6px;left:6px;background:${C.gold};color:#0a0a0f;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;}
+.ob{position:absolute;top:6px;left:6px;background:#f0b429;color:#0a0a0f;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;}
 .vi{padding:12px;}
 .vtit{font-size:13px;font-weight:500;line-height:1.4;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .frow{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:flex-end;}
 .fi{display:flex;flex-direction:column;min-width:140px;}
 .kwr{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-.kw{padding:4px 12px;border-radius:20px;font-size:12px;background:${C.accS};color:${C.acc};border:1px solid ${C.acc}33;cursor:pointer;}
-.kw:hover,.kw.sel{background:${C.acc};color:white;}
+.kw{padding:4px 12px;border-radius:20px;font-size:12px;background:#6c3fff22;color:#6c3fff;border:1px solid #6c3fff33;cursor:pointer;}
+.kw:hover,.kw.sel{background:#6c3fff;color:white;}
 .cgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
-.ci{border-radius:6px;overflow:hidden;aspect-ratio:9/16;background:${C.surf};position:relative;}
+.ci{border-radius:6px;overflow:hidden;aspect-ratio:9/16;background:#111118;position:relative;}
 .ci video{width:100%;height:100%;object-fit:cover;}
 .csrc{position:absolute;bottom:4px;right:4px;font-size:9px;background:rgba(0,0,0,0.7);color:white;padding:1px 5px;border-radius:3px;}
-.cbtn{background:transparent;border:1px solid ${C.bord};color:${C.muted};font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer;}
-.cbtn:hover{border-color:${C.acc};color:${C.acc};}
-.tabs{display:flex;gap:4px;margin-bottom:20px;background:${C.surf};padding:4px;border-radius:10px;}
-.tab{flex:1;padding:8px;text-align:center;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500;color:${C.muted};transition:all 0.15s;border:none;background:transparent;font-family:'Inter',sans-serif;}
-.tab.active{background:${C.acc};color:white;}
-.div{height:1px;background:${C.bord};margin:20px 0;}
-@media(max-width:768px){.sidebar{width:60px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.main{margin-left:60px;padding:20px 16px;}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;}}
+.cbtn{background:transparent;border:1px solid #222230;color:#7878a0;font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer;}
+.cbtn:hover{border-color:#6c3fff;color:#6c3fff;}
+.tabs{display:flex;gap:4px;margin-bottom:20px;background:#111118;padding:4px;border-radius:10px;}
+.tab{flex:1;padding:8px;text-align:center;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500;color:#7878a0;transition:all 0.15s;border:none;background:transparent;font-family:'Inter',sans-serif;}
+.tab.active{background:#6c3fff;color:white;}
+.div{height:1px;background:#222230;margin:20px 0;}
+@media(max-width:768px){
+  .sidebar{width:56px;}
+  .slogo .ltxt,.slogo .lsub,.nitem span{display:none;}
+  .nitem{justify-content:center;padding:12px 0;}
+  .main{margin-left:56px;padding:16px 14px;}
+  .g2,.g3{grid-template-columns:1fr;}
+  .frow{flex-direction:column;}
+  .fi{min-width:100%;}
+  .ptitle{font-size:20px;}
+  .cgrid{grid-template-columns:repeat(2,1fr);}
+}
 `;
 
 function CopyBtn({text}){
@@ -239,76 +248,8 @@ function ResearchPage({config}){
     const q=kw||query;if(!q.trim())return;
     setLoading(true);setError("");setVideos([]);
     try{
-      const items=await searchYouTube(q,config,{duration:filters.duration,language:filters.language});
-      if(!items.length){setError("No se encontraron videos.");setLoading(false);return;}
-      const ids=items.map(i=>i.id?.videoId).filter(Boolean);
-      const chIds=[...new Set(items.map(i=>i.snippet?.channelId).filter(Boolean))];
-      const[stats,channels]=await Promise.all([getVideoStats(ids,config),getChannelStats(chIds,config)]);
-      const chMap={};channels.forEach(c=>{chMap[c.id]=parseInt(c.statistics?.subscriberCount||0);});
-      const enriched=stats.map(v=>{
-        const subs=chMap[v.snippet?.channelId]||0;
-        const views=parseInt(v.statistics?.viewCount||0);
-        const dur=parseDuration(v.contentDetails?.duration);
-        return{...v,subs,views,dur,score:outlierScore(views,subs)};
-      }).filter(v=>!filters.maxSubs||v.subs<=parseInt(filters.maxSubs)).sort((a,b)=>b.score-a.score);
-      setVideos(enriched);
-    }catch(e){setError(e.message);}
-    setLoading(false);
-  };
-  return(
-    <div>
-      <div className="ptitle">🔍 Investigar Nichos</div>
-      <div className="psub">Encuentra videos outliers con alto potencial viral.</div>
-      <div className="card">
-        <div className="frow">
-          <div className="fi" style={{flex:2}}><label className="lbl">Búsqueda</label><input className="inp" placeholder="spiritual awakening..." value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}/></div>
-          <div className="fi"><label className="lbl">Duración</label><select className="inp" value={filters.duration} onChange={e=>setFilters(p=>({...p,duration:e.target.value}))}><option value="any">Todos</option><option value="short">Shorts</option><option value="medium">Medianos</option><option value="long">Largos</option></select></div>
-          <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={filters.language} onChange={e=>setFilters(p=>({...p,language:e.target.value}))}><option value="en">Inglés</option><option value="es">Español</option></select></div>
-          <div className="fi"><label className="lbl">Máx subs</label><input className="inp" type="number" value={filters.maxSubs} onChange={e=>setFilters(p=>({...p,maxSubs:e.target.value}))}/></div>
-          <button className="btn bp" onClick={()=>search()} disabled={loading||!query.trim()}>{loading?"⏳":"Buscar"}</button>
-        </div>
-        <div style={{borderTop:`1px solid ${C.bord}`,paddingTop:14}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <span className="lbl" style={{marginBottom:0}}>Keywords IA</span>
-            <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={genKw} disabled={loadKw}>{loadKw?"Generando...":"✨ Generar"}</button>
-          </div>
-          <div className="kwr">{(aiKw.length?aiKw:defKw).map(kw=><span key={kw} className={`kw${query===kw?" sel":""}`} onClick={()=>{setQuery(kw);search(kw);}}>{kw}</span>)}</div>
-        </div>
-      </div>
-      {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>Buscando joyas virales...</span></div>}
-      {videos.length>0&&<>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-          <span style={{fontSize:13,color:C.muted}}>{videos.length} videos encontrados</span>
-          <span className="tag tg">🔥 Top outliers primero</span>
-        </div>
-        <div className="g3">{videos.map(v=>{
-          const thumb=v.snippet?.thumbnails?.medium?.url;
-          const score=parseFloat(v.score);
-          return(
-            <div key={v.id} className="vc" onClick={()=>window.open(`https://youtube.com/watch?v=${v.id}`,'_blank')}>
-              <div className="vt">{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
-              <div className="vi">
-                <div className="vtit">{v.snippet?.title}</div>
-                <div style={{fontSize:11,color:C.muted,marginBottom:8}}>{v.snippet?.channelTitle} · {formatNumber(v.subs)} subs</div>
-                <div className="srow">
-                  <div><div style={{fontSize:18,fontWeight:700}}>{formatNumber(v.views)}</div><div style={{fontSize:11,color:C.muted}}>vistas</div></div>
-                  <div><div style={{fontSize:18,fontWeight:700,color:score>10?C.gold:C.acc}}>{score}x</div><div style={{fontSize:11,color:C.muted}}>outlier</div></div>
-                </div>
-                <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={e=>{e.stopPropagation();window.open(`https://youtube.com/watch?v=${v.id}`,'_blank');}}>▶ Ver</button>
-                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={e=>{e.stopPropagation();navigator.clipboard.writeText(`https://youtube.com/watch?v=${v.id}`);alert('URL copiada — pégala en Analizar Video');}}>🎯 Copiar URL</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}</div>
-      </>}
-    </div>
-  );
-}
-
-function AnalyzerPage({config}){
+      const items=await searchYouTu
+      function AnalyzerPage({config}){
   const [url,setUrl]=useState("");
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
@@ -323,9 +264,10 @@ function AnalyzerPage({config}){
       const v=stats[0];if(!v)throw new Error("Video no encontrado.");
       const langLabel=LANGUAGES.find(l=>l.code===lang)?.label||"español";
       const styleLabel=STYLES.find(s=>s.code===config.style)?.label||"reflexivo";
-      const prompt=`Analiza este video viral y genera 3 ideas adaptadas.\nVIDEO: "${v.snippet?.title}"\nDESCRIPCIÓN: ${v.snippet?.description?.slice(0,400)||""}\n\nResponde SOLO en JSON:\n{"estructura":{"hook":"...","desarrollo":"...","cierre":"..."},"ideas":[{"titulo":"...","hook":"...","estructura":"...","miniatura":"...","palabrasClave":["kw1","kw2"]}]}\n\n3 ideas en ${langLabel}, estilo ${styleLabel}, canal faceless. Solo JSON.`;
+      const prompt=`Analiza este video viral y genera 3 ideas adaptadas.\nVIDEO: "${v.snippet?.title}"\nDESCRIPCIÓN: ${v.snippet?.description?.slice(0,400)||""}\n\nResponde SOLO en JSON válido sin caracteres especiales problemáticos:\n{"estructura":{"hook":"descripcion corta","desarrollo":"descripcion corta","cierre":"descripcion corta"},"ideas":[{"titulo":"titulo","hook":"hook corto","estructura":"estructura","miniatura":"concepto","palabrasClave":["kw1","kw2"]}]}\n\n3 ideas en ${langLabel}, estilo ${styleLabel}, canal faceless. Solo JSON sin markdown.`;
       const text=await callClaude(prompt,config);
-      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      const clean=text.replace(/```json|```/g,"").trim();
+      const parsed=JSON.parse(clean);
       setResult({video:v,parsed,views:formatNumber(parseInt(v.statistics?.viewCount||0)),dur:formatDuration(parseDuration(v.contentDetails?.duration))});
     }catch(e){setError(e.message);}
     setLoading(false);
@@ -370,84 +312,8 @@ function ShortsPage({config}){
   const [topic,setTopic]=useState("");
   const [lang,setLang]=useState(config.language);
   const [style,setStyle]=useState(config.style);
-  const [loading,setLoading]=useState(false);
-  const [error,setError]=useState("");
-  const [script,setScript]=useState(null);
-  const [clips,setClips]=useState({});
-  const [loadClips,setLoadClips]=useState({});
-  const generate=async()=>{
-    if(!topic.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});
-    try{
-      const lL=LANGUAGES.find(l=>l.code===lang)?.label||"español neutro";
-      const sL=STYLES.find(s=>s.code===style)?.label||"reflexivo";
-      const prompt=`Crea un YouTube Short completo sobre: "${topic}"\nIdioma: ${lL}\nEstilo: ${sL}\nSin emojis, sin listas, lenguaje simple para voz IA, sin marca personal.\n\nResponde SOLO en JSON:\n{"titulo":"...","duracion_total":"55-60 segundos","escenas":[{"numero":1,"tipo":"HOOK","duracion":"3 segundos","guion":"...","prompt_video":"prompt en inglés para Veo3/Runway","busqueda_clip":"keyword inglés"},{"numero":2,"tipo":"DESARROLLO","duracion":"45 segundos","guion":"...","prompt_video":"...","busqueda_clip":"..."},{"numero":3,"tipo":"CIERRE","duracion":"10 segundos","guion":"pregunta reflexiva","prompt_video":"...","busqueda_clip":"..."}]}\nSolo JSON.`;
-      const text=await callClaude(prompt,config);
-      setScript(JSON.parse(text.replace(/```json|```/g,"").trim()));
-    }catch{setError("Error generando. Verifica tu Anthropic API key.");}
-    setLoading(false);
-  };
-  const fetchClips=async(e)=>{
-    setLoadClips(p=>({...p,[e.numero]:true}));
-    try{
-      const[px,pb]=await Promise.all([searchPexels(e.busqueda_clip,config),config.pixabayKey?searchPixabay(e.busqueda_clip,config):[]]);
-      setClips(p=>({...p,[e.numero]:{px,pb}}));
-    }catch{}
-    setLoadClips(p=>({...p,[e.numero]:false}));
-  };
-  const sc={HOOK:C.gold,DESARROLLO:C.acc,CIERRE:C.ok};
-  return(
-    <div>
-      <div className="ptitle">⚡ Generar Short</div>
-      <div className="psub">Script completo con prompts y clips para cada escena.</div>
-      <div className="card">
-        <div className="frow">
-          <div className="fi" style={{flex:3}}><label className="lbl">Tema</label><input className="inp" placeholder="El silencio que transforma..." value={topic} onChange={e=>setTopic(e.target.value)} onKeyDown={e=>e.key==="Enter"&&generate()}/></div>
-          <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={lang} onChange={e=>setLang(e.target.value)}>{LANGUAGES.map(l=><option key={l.code} value={l.code}>{l.label}</option>)}</select></div>
-          <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={e=>setStyle(e.target.value)}>{STYLES.map(s=><option key={s.code} value={s.code}>{s.label}</option>)}</select></div>
-          <button className="btn bg" onClick={generate} disabled={loading||!topic.trim()}>{loading?"⏳":"⚡ Generar"}</button>
-        </div>
-      </div>
-      {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>Generando tu Short...</span></div>}
-      {script&&<>
-        <div className="card" style={{borderColor:C.gold}}>
-          <div style={{fontSize:17,fontWeight:700}}>{script.titulo}</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:4}}>⏱ {script.duracion_total}</div>
-        </div>
-        {script.escenas?.map(e=>(
-          <div key={e.numero} className="sc">
-            <div className="sh">
-              <div className="sn" style={{background:sc[e.tipo]||C.acc}}>{e.numero}</div>
-              <div><div style={{fontSize:11,fontWeight:700,color:sc[e.tipo]||C.acc,textTransform:"uppercase"}}>{e.tipo}</div><div style={{fontSize:11,color:C.muted}}>{e.duracion}</div></div>
-            </div>
-            <span className="lbl">Guion</span>
-            <div className="stxt">{e.guion}</div>
-            <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.guion}/></div>
-            <span className="lbl">Prompt Veo3 / Runway / Sora</span>
-            <div className="pbox">{e.prompt_video}</div>
-            <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.prompt_video}/></div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
-              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={()=>fetchClips(e)} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Buscar clips"}</button>
-            </div>
-            {clips[e.numero]&&<div className="cgrid">
-              {clips[e.numero].px?.slice(0,3).map(v=><div key={v.id} className="ci"><video src={v.video_files?.[0]?.link} muted loop onMouseOver={el=>el.target.play()} onMouseOut={el=>el.target.pause()}/><span className="csrc">Pexels</span></div>)}
-              {clips[e.numero].pb?.slice(0,3).map(v=><div key={v.id} className="ci"><video src={v.videos?.small?.url} muted loop onMouseOver={el=>el.target.play()} onMouseOut={el=>el.target.pause()}/><span className="csrc">Pixabay</span></div>)}
-            </div>}
-          </div>
-        ))}
-        <div className="card">
-          <span className="lbl">Script completo</span>
-          <div className="stxt" style={{marginTop:8}}>{script.escenas?.map(e=>`[${e.tipo} - ${e.duracion}]\n${e.guion}`).join("\n\n")}</div>
-          <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}><CopyBtn text={script.escenas?.map(e=>`[${e.tipo}]\n${e.guion}`).join("\n\n")}/></div>
-        </div>
-      </>}
-    </div>
-  );
-}
-
-function LongFormPage({config}){
+  const [loadin
+         function LongFormPage({config}){
   const [topic,setTopic]=useState("");
   const [duration,setDuration]=useState("30");
   const [lang,setLang]=useState(config.language);
@@ -464,12 +330,13 @@ function LongFormPage({config}){
     try{
       const lL=LANGUAGES.find(l=>l.code===lang)?.label||"español neutro";
       const sL=STYLES.find(s=>s.code===style)?.label||"reflexivo";
-      const n=duration==="60"?8:duration==="45"?6:5;
-      const prompt=`Crea estructura completa de video de ${duration} minutos sobre: "${topic}"\nIdioma: ${lL}, Estilo: ${sL}, ${n} escenas, canal faceless, sin emojis.\n\nResponde SOLO en JSON:\n{"titulo":"...","descripcion":"150 palabras para YouTube","duracion_total":"${duration} minutos","palabras_clave":["kw1","kw2","kw3","kw4","kw5"],"escenas":[{"numero":1,"tipo":"INTRO","titulo_bloque":"...","duracion":"X min","guion":"mínimo 150 palabras","prompt_video":"prompt inglés detallado","busqueda_clip":"keyword inglés"}]}\nTipos: INTRO, DESARROLLO (x${n-2}), CIERRE. Solo JSON.`;
+      const n=duration==="60"?8:duration==="45"?6:duration==="20"?4:duration==="15"?3:duration==="10"?2:5;
+      const prompt=`Crea estructura de video de ${duration} minutos sobre: "${topic}"\nIdioma: ${lL}, Estilo: ${sL}, ${n} escenas, canal faceless.\n\nResponde SOLO en JSON válido:\n{"titulo":"titulo SEO","descripcion":"descripcion YouTube 150 palabras","duracion_total":"${duration} minutos","palabras_clave":["kw1","kw2","kw3","kw4","kw5"],"escenas":[{"numero":1,"tipo":"INTRO","titulo_bloque":"nombre bloque","duracion":"X min","guion":"guion minimo 100 palabras","prompt_video":"prompt ingles detallado","busqueda_clip":"keyword ingles"}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.`;
       const text=await callClaude(prompt,config);
-      setScript(JSON.parse(text.replace(/```json|```/g,"").trim()));
+      const clean=text.replace(/```json|```/g,"").trim();
+      setScript(JSON.parse(clean));
       setOpen(1);
-    }catch{setError("Error generando. Verifica tu Anthropic API key.");}
+    }catch(e){setError("Error generando. Verifica tu Anthropic API key.");}
     setLoading(false);
   };
   const fetchClips=async(e)=>{
@@ -484,11 +351,18 @@ function LongFormPage({config}){
   return(
     <div>
       <div className="ptitle">📽️ Videos Largos</div>
-      <div className="psub">Script por escenas con prompts y clips para 30-60 minutos.</div>
+      <div className="psub">Script por escenas con prompts y clips para 10-60 minutos.</div>
       <div className="card">
         <div className="frow">
           <div className="fi" style={{flex:3}}><label className="lbl">Tema</label><input className="inp" placeholder="La disciplina como camino espiritual..." value={topic} onChange={e=>setTopic(e.target.value)}/></div>
-          <div className="fi"><label className="lbl">Duración</label><select className="inp" value={duration} onChange={e=>setDuration(e.target.value)}><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div>
+          <div className="fi"><label className="lbl">Duración</label><select className="inp" value={duration} onChange={e=>setDuration(e.target.value)}>
+            <option value="10">10 min</option>
+            <option value="15">15 min</option>
+            <option value="20">20 min</option>
+            <option value="30">30 min</option>
+            <option value="45">45 min</option>
+            <option value="60">60 min</option>
+          </select></div>
           <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={lang} onChange={e=>setLang(e.target.value)}>{LANGUAGES.map(l=><option key={l.code} value={l.code}>{l.label}</option>)}</select></div>
           <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={e=>setStyle(e.target.value)}>{STYLES.map(s=><option key={s.code} value={s.code}>{s.label}</option>)}</select></div>
           <button className="btn bp" onClick={generate} disabled={loading||!topic.trim()} style={{alignSelf:"flex-end"}}>{loading?"⏳":"📽️ Generar"}</button>
@@ -550,4 +424,4 @@ export default function App(){
   const configured=!!(config?.youtubeKey&&config?.anthropicKey);
   const pages={config:<ConfigPage config={config} setConfig={handleConfig}/>,research:<ResearchPage config={config}/>,analyzer:<AnalyzerPage config={config}/>,shorts:<ShortsPage config={config}/>,longform:<LongFormPage config={config}/>};
   return(<><style>{css}</style><div className="app"><Sidebar page={page} setPage={setPage} configured={configured}/><div className="main">{pages[page]}</div></div></>);
-                                      }
+      }
