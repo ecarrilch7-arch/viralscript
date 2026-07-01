@@ -82,9 +82,10 @@ const C = {
 };
 
 const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');"
++ "html{width:100%;overflow-x:hidden;}"
 + "*{box-sizing:border-box;margin:0;padding:0;}"
-+ "body{background:#0a0a0f;color:#e8e8f0;font-family:'Inter',sans-serif;min-height:100vh;}"
-+ ".app{display:flex;min-height:100vh;}"
++ "body{background:#0a0a0f;color:#e8e8f0;font-family:'Inter',sans-serif;min-height:100vh;width:100%;overflow-x:hidden;}"
++ ".app{display:flex;min-height:100vh;width:100%;overflow-x:hidden;}"
 + ".sidebar{width:220px;min-height:100vh;background:#111118;border-right:1px solid #222230;display:flex;flex-direction:column;padding:24px 0;position:fixed;top:0;left:0;z-index:100;}"
 + ".slogo{padding:0 20px 28px;border-bottom:1px solid #222230;margin-bottom:16px;}"
 + ".ltxt{font-family:'Syne',sans-serif;font-size:20px;font-weight:800;letter-spacing:-0.5px;}"
