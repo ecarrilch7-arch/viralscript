@@ -144,7 +144,7 @@ const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400
 + ".cbtn{background:transparent;border:1px solid #222230;color:#7878a0;font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer;}"
 + ".cbtn:hover{border-color:#6c3fff;color:#6c3fff;}"
 + ".div{height:1px;background:#222230;margin:20px 0;}"
-+ "@media(max-width:768px){.sidebar{width:56px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.nitem{justify-content:center;padding:12px 0;}.main{margin-left:56px;padding:16px 14px;}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;}.fi{min-width:100%;}.ptitle{font-size:20px;}.cgrid{grid-template-columns:repeat(2,1fr);}}";
++ "@media(max-width:900px){.sidebar{width:56px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.nitem{justify-content:center;padding:12px 0;}.main{margin-left:56px;padding:16px 14px;width:calc(100% - 56px);}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;align-items:stretch;}.fi{min-width:100%;}.ptitle{font-size:20px;}.cgrid{grid-template-columns:repeat(2,1fr);}}";
 
 function CopyBtn(props){
   const text = props.text;
