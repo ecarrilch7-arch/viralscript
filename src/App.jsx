@@ -121,6 +121,7 @@ const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400
 + ".alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}"
 + ".aerr{background:#ef444420;border:1px solid #ef444444;color:#fca5a5;}"
 + ".aok{background:#22c55e20;border:1px solid #22c55e44;color:#86efac;}"
++ ".ainf{background:#6c3fff22;border:1px solid #6c3fff44;color:#a78bfa;}"
 + ".loader{display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px;color:#7878a0;font-size:14px;}"
 + ".spin{width:36px;height:36px;border:3px solid #222230;border-top-color:#6c3fff;border-radius:50%;animation:spin 0.8s linear infinite;}"
 + "@keyframes spin{to{transform:rotate(360deg);}}"
@@ -176,7 +177,7 @@ function Sidebar(props){
       })}
     </div>
   );
-          }
+                               }
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
   const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",language:"es-latam",style:"reflexivo",channelName:"",niche:""});
@@ -306,7 +307,7 @@ function ResearchPage(props){
       </div>}
     </div>
   );
-    }
+}
 function AnalyzerPage(props){
   const config = props.config;
   const [url,setUrl]=useState("");
@@ -369,17 +370,22 @@ function AnalyzerPage(props){
     </div>
   );
 }
-
 function ShortsPage(props){
   const config = props.config;
+  const [mode,setMode]=useState("ai");
   const [topic,setTopic]=useState("");
   const [lang,setLang]=useState(config.language);
   const [style,setStyle]=useState(config.style);
   const [loading,setLoading]=useState(false);
+  const [loadingStep,setLoadingStep]=useState("");
   const [error,setError]=useState("");
   const [script,setScript]=useState(null);
   const [clips,setClips]=useState({});
   const [loadClips,setLoadClips]=useState({});
+  const [ownScript,setOwnScript]=useState("");
+  const [ownAudioName,setOwnAudioName]=useState("");
+  const [ownAudioUrl,setOwnAudioUrl]=useState("");
+
   const generate=async function(){
     if(!topic.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});
@@ -388,13 +394,56 @@ function ShortsPage(props){
       const lL=lObj?lObj.label:"español neutro";
       const sObj=STYLES.find(function(s){return s.code===style;});
       const sL=sObj?sObj.label:"reflexivo";
-      const prompt="Crea un YouTube Short completo sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+"\nEstilo: "+sL+"\nSin emojis, sin listas, lenguaje simple para voz IA, sin marca personal.\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"pregunta reflexiva\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"}]}\nSolo JSON sin markdown.";
+
+      setLoadingStep("Paso 1/4 — Generando ideas con gancho...");
+      const p1="Genera 3 ideas de YouTube Short sobre "+JSON.stringify(topic)+" en "+lL+", estilo "+sL+". No quiero ideas genericas ni titulos tipo 'como mejorar en'. Cada idea debe basarse en un problema real y especifico que alguien ya esta viviendo, algo que genere identificacion inmediata tipo 'esto me pasa'. Responde SOLO JSON: {\"ideas\":[\"idea1\",\"idea2\",\"idea3\"]}. Sin markdown.";
+      const r1=await callClaude(p1,config);
+      const ideas=JSON.parse(r1.replace(/```json|```/g,"").trim());
+      const ideaElegida=ideas.ideas&&ideas.ideas[0]?ideas.ideas[0]:topic;
+
+      setLoadingStep("Paso 2/4 — Construyendo estructura...");
+      const p2="Voy a hacer este YouTube Short: "+JSON.stringify(ideaElegida)+". Dame SOLO la estructura del guion, sin escribir el contenido todavia. Debe ser un proceso que lleve a un resultado claro, maximo 3 partes ademas del hook (formato short de 55-60 segundos). Cada parte debe existir por una razon. Responde SOLO JSON: {\"estructura\":[\"parte1 descripcion breve\",\"parte2 descripcion breve\",\"parte3 descripcion breve\"]}. Sin markdown.";
+      const r2=await callClaude(p2,config);
+      const estructura=JSON.parse(r2.replace(/```json|```/g,"").trim());
+
+      setLoadingStep("Paso 3/4 — Creando el hook...");
+      const p3="Escribe un hook de 3 segundos para este short: "+JSON.stringify(ideaElegida)+" con esta estructura: "+JSON.stringify(estructura.estructura)+". Idioma "+lL+", estilo "+sL+". No empieces explicando, no suene a tutorial. Genera curiosidad o tension: describe una situacion real, rompe una creencia, o contradice lo que la persona piensa. No resuelvas el problema todavia. Responde SOLO JSON: {\"hook\":\"texto del hook\"}. Sin markdown.";
+      const r3=await callClaude(p3,config);
+      const hookData=JSON.parse(r3.replace(/```json|```/g,"").trim());
+
+      setLoadingStep("Paso 4/4 — Desarrollando guion completo y cierre...");
+      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"}]}\nSolo JSON sin markdown.";
+      const text=await callClaude(p4,config);
+      const clean=text.replace(/```json|```/g,"").trim();
+      const finalScript=JSON.parse(clean);
+      setScript(finalScript);
+      autoFetchAllClips(finalScript);
+    }catch(e){setError("Error generando. Verifica tu Anthropic API key y saldo.");}
+    setLoading(false);setLoadingStep("");
+  };
+
+  const useOwnScript=async function(){
+    if(!ownScript.trim())return;
+    setLoading(true);setError("");setScript(null);setClips({});
+    setLoadingStep("Analizando tu guion y dividiendo en escenas...");
+    try{
+      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para cada escena genera un prompt de video en ingles y una keyword de busqueda de stock footage en ingles.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
-      setScript(JSON.parse(clean));
-    }catch(e){setError("Error generando. Verifica tu Anthropic API key.");}
-    setLoading(false);
+      const finalScript=JSON.parse(clean);
+      setScript(finalScript);
+      autoFetchAllClips(finalScript);
+    }catch(e){setError("Error procesando tu guion. Verifica tu Anthropic API key.");}
+    setLoading(false);setLoadingStep("");
   };
+
+  const autoFetchAllClips=async function(scr){
+    if(!scr||!scr.escenas)return;
+    for(const e of scr.escenas){
+      fetchClips(e);
+    }
+  };
+
   const fetchClips=async function(e){
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
@@ -403,25 +452,61 @@ function ShortsPage(props){
     }catch(err){}
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
   };
+
+  const handleAudioUpload=function(ev){
+    const file=ev.target.files&&ev.target.files[0];
+    if(!file)return;
+    setOwnAudioName(file.name);
+    const url=URL.createObjectURL(file);
+    setOwnAudioUrl(url);
+  };
+
   const sc={HOOK:"#f0b429",DESARROLLO:"#6c3fff",CIERRE:"#22c55e"};
+
   return(
     <div>
       <div className="ptitle">⚡ Generar Short</div>
       <div className="psub">Script completo con prompts y clips para cada escena.</div>
-      <div className="card">
+
+      <div className="tabs">
+        <button className={"tab"+(mode==="ai"?" active":"")} onClick={function(){setMode("ai");}}>✨ Generar con IA</button>
+        <button className={"tab"+(mode==="own"?" active":"")} onClick={function(){setMode("own");}}>📝 Ya tengo mi guion</button>
+      </div>
+
+      {mode==="ai"&&<div className="card">
         <div className="frow">
           <div className="fi" style={{flex:3}}><label className="lbl">Tema</label><input className="inp" placeholder="El silencio que transforma..." value={topic} onChange={function(e){setTopic(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")generate();}}/></div>
           <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={lang} onChange={function(e){setLang(e.target.value);}}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
           <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={function(e){setStyle(e.target.value);}}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
           <button className="btn bg" onClick={generate} disabled={loading||!topic.trim()}>{loading?"⏳":"⚡ Generar"}</button>
         </div>
-      </div>
+      </div>}
+
+      {mode==="own"&&<div className="card">
+        <label className="lbl">Pega tu guion completo</label>
+        <textarea className="inp" style={{minHeight:160,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} placeholder="Pega aqui tu guion ya escrito..." value={ownScript} onChange={function(e){setOwnScript(e.target.value);}}/>
+        <div style={{marginTop:14}}>
+          <label className="lbl">Audio propio (opcional)</label>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <label className="btn bs" style={{cursor:"pointer"}}>
+              🎵 Subir audio
+              <input type="file" accept="audio/*" style={{display:"none"}} onChange={handleAudioUpload}/>
+            </label>
+            {ownAudioName&&<span style={{fontSize:12,color:"#7878a0"}}>{ownAudioName}</span>}
+          </div>
+          {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
+        </div>
+        <button className="btn bg" onClick={useOwnScript} disabled={loading||!ownScript.trim()} style={{marginTop:16}}>{loading?"⏳":"📋 Organizar en escenas"}</button>
+      </div>}
+
       {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>Generando tu Short...</span></div>}
+      {loading&&<div className="loader"><div className="spin"/><span>{loadingStep||"Procesando..."}</span></div>}
+
       {script&&<div>
         <div className="card" style={{borderColor:"#f0b429"}}>
           <div style={{fontSize:17,fontWeight:700}}>{script.titulo}</div>
           <div style={{fontSize:12,color:"#7878a0",marginTop:4}}>⏱ {script.duracion_total}</div>
+          {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
         </div>
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
@@ -437,11 +522,12 @@ function ShortsPage(props){
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.prompt_video}/></div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
-              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Buscar clips"}</button>
+              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
             </div>
+            {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automáticamente...</div>}
             {clips[e.numero]&&<div className="cgrid">
-              {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop onMouseOver={function(el){el.target.play();}} onMouseOut={function(el){el.target.pause();}}/><span className="csrc">Pexels</span></div>;})}
-              {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop onMouseOver={function(el){el.target.play();}} onMouseOut={function(el){el.target.pause();}}/><span className="csrc">Pixabay</span></div>;})}
+              {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/><span className="csrc">Pexels</span></div>;})}
+              {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/><span className="csrc">Pixabay</span></div>;})}
             </div>}
           </div>;
         })}
@@ -452,7 +538,7 @@ function ShortsPage(props){
       </div>}
     </div>
   );
-                                                                                                                               }
+            }
 function LongFormPage(props){
   const config = props.config;
   const [topic,setTopic]=useState("");
@@ -541,8 +627,8 @@ function LongFormPage(props){
                 <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Buscar clips"}</button>
               </div>
               {clips[e.numero]&&<div className="cgrid">
-                {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop onMouseOver={function(el){el.target.play();}} onMouseOut={function(el){el.target.pause();}}/><span className="csrc">Pexels</span></div>;})}
-                {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop onMouseOver={function(el){el.target.play();}} onMouseOut={function(el){el.target.pause();}}/><span className="csrc">Pixabay</span></div>;})}
+                {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/><span className="csrc">Pexels</span></div>;})}
+                {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/><span className="csrc">Pixabay</span></div>;})}
               </div>}
             </div>}
           </div>;
@@ -580,4 +666,4 @@ export default function App(){
       </div>
     </div>
   );
-      }
+}
