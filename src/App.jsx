@@ -55,6 +55,26 @@ async function callClaude(prompt, config) {
   const data = await res.json();
   return data.content?.[0]?.text || "";
 }
+async function getElevenLabsVoices(config) {
+  const res = await fetch("/api/elevenlabs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "voices", apiKey: config.elevenlabsKey }),
+  });
+  if (!res.ok) throw new Error("Error obteniendo voces de ElevenLabs.");
+  const data = await res.json();
+  return data.voices || [];
+}
+async function generateSpeech(text, voiceId, config) {
+  const res = await fetch("/api/elevenlabs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "speak", apiKey: config.elevenlabsKey, voiceId: voiceId, text: text }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Error generando audio. Verifica tu API key o si se agotaron tus creditos gratuitos de ElevenLabs.");
+  return "data:audio/mpeg;base64," + data.audioBase64;
+}
 
 function parseDuration(iso) {
   const m = iso && iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -145,6 +165,9 @@ const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400
 + ".cbtn{background:transparent;border:1px solid #222230;color:#7878a0;font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer;}"
 + ".cbtn:hover{border-color:#6c3fff;color:#6c3fff;}"
 + ".div{height:1px;background:#222230;margin:20px 0;}"
++ ".tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}"
++ ".tab{padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #222230;background:#16161f;color:#7878a0;transition:all 0.15s;}"
++ ".tab.active{background:#6c3fff;color:white;border-color:#6c3fff;}"
 + "@media(max-width:900px){.sidebar{width:56px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.nitem{justify-content:center;padding:12px 0;}.main{margin-left:56px;padding:16px 14px;width:calc(100% - 56px);}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;align-items:stretch;}.fi{min-width:100%;}.ptitle{font-size:20px;}.cgrid{grid-template-columns:repeat(2,1fr);}}";
 
 function CopyBtn(props){
@@ -177,10 +200,10 @@ function Sidebar(props){
       })}
     </div>
   );
-                               }
+  }
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",language:"es-latam",style:"reflexivo",channelName:"",niche:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",language:"es-latam",style:"reflexivo",channelName:"",niche:""});
   const [saved,setSaved]=useState(false);
   const save=function(){saveConfig(form);setConfig(form);setSaved(true);setTimeout(function(){setSaved(false);},2000);};
   const f=function(k){return function(e){setForm(function(p){const np=Object.assign({},p);np[k]=e.target.value;return np;});};};
@@ -192,7 +215,7 @@ function ConfigPage(props){
       {saved&&<div className="alert aok">✓ Guardado correctamente.</div>}
       <div className="card">
         <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🔑 API Keys</div>
-        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."}].map(function(item){
+        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"}].map(function(item){
           return <div key={item.k} style={{marginBottom:14}}>
             <label className="lbl">{item.l}</label>
             <input className="inp" type="password" placeholder={item.p} value={form[item.k]||""} onChange={f(item.k)}/>
@@ -226,7 +249,7 @@ function ResearchPage(props){
   const genKw=async function(){
     setLoadKw(true);
     try{
-      const p="Genera 8 keywords en ingles para buscar videos virales de YouTube en el nicho de "+JSON.stringify(config.niche||"desarrollo personal")+". Canales faceless, videos largos. Responde SOLO con JSON array de strings.";
+      const p="Genera 8 keywords en ingles para buscar videos virales de YouTube en el nicho de " + JSON.stringify(config.niche||"desarrollo personal") + ". Canales faceless, videos largos. Responde SOLO con JSON array de strings.";
       const t=await callClaude(p,config);
       setAiKw(JSON.parse(t.replace(/```json|```/g,"").trim()));
     }catch(err){setAiKw(defKw.slice(0,8));}
@@ -241,7 +264,7 @@ function ResearchPage(props){
       const ids=items.map(function(i){return i.id?i.id.videoId:null;}).filter(Boolean);
       const chIds=Array.from(new Set(items.map(function(i){return i.snippet?i.snippet.channelId:null;}).filter(Boolean)));
       const results=await Promise.all([getVideoStats(ids,config),getChannelStats(chIds,config)]);
-      const stats=results[0],channels=results[1];
+      const stats=results[0], channels=results[1];
       const chMap={};
       channels.forEach(function(c){chMap[c.id]=parseInt((c.statistics&&c.statistics.subscriberCount)||0);});
       const enriched=stats.map(function(v){
@@ -288,7 +311,7 @@ function ResearchPage(props){
           const score=parseFloat(v.score);
           return(
             <div key={v.id} className="vc">
-              <div className="vt" onClick={function(){window.open("https://youtube.com/watch?v="+v.id,"_blank");}}>{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
+              <div className="vt" onClick={function(){window.open("https://youtube.com/watch?v="+v.id,'_blank');}}>{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
               <div className="vi">
                 <div className="vtit">{v.snippet?v.snippet.title:""}</div>
                 <div style={{fontSize:11,color:"#7878a0",marginBottom:8}}>{v.snippet?v.snippet.channelTitle:""} · {formatNumber(v.subs)} subs</div>
@@ -297,8 +320,8 @@ function ResearchPage(props){
                   <div><div style={{fontSize:18,fontWeight:700,color:score>10?"#f0b429":"#6c3fff"}}>{score}x</div><div style={{fontSize:11,color:"#7878a0"}}>outlier</div></div>
                 </div>
                 <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={function(){window.open("https://youtube.com/watch?v="+v.id,"_blank");}}>▶ Ver</button>
-                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={function(){navigator.clipboard.writeText("https://youtube.com/watch?v="+v.id);alert("URL copiada — pégala en Analizar Video");}}>🎯 Copiar URL</button>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={function(){window.open("https://youtube.com/watch?v="+v.id,'_blank');}}>▶ Ver</button>
+                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={function(){navigator.clipboard.writeText("https://youtube.com/watch?v="+v.id);alert('URL copiada — pégala en Analizar Video');}}>🎯 Copiar URL</button>
                 </div>
               </div>
             </div>
@@ -307,7 +330,7 @@ function ResearchPage(props){
       </div>}
     </div>
   );
-}
+    }
 function AnalyzerPage(props){
   const config = props.config;
   const [url,setUrl]=useState("");
@@ -385,6 +408,39 @@ function ShortsPage(props){
   const [ownScript,setOwnScript]=useState("");
   const [ownAudioName,setOwnAudioName]=useState("");
   const [ownAudioUrl,setOwnAudioUrl]=useState("");
+  const [voices,setVoices]=useState([]);
+  const [voiceId,setVoiceId]=useState("");
+  const [loadVoices,setLoadVoices]=useState(false);
+  const [voiceError,setVoiceError]=useState("");
+  const [genAudio,setGenAudio]=useState({});
+  const [genAudioLoading,setGenAudioLoading]=useState({});
+
+  useEffect(function(){
+    if(config.elevenlabsKey){
+      setLoadVoices(true);
+      getElevenLabsVoices(config).then(function(v){
+        setVoices(v);
+        if(v.length&&!voiceId)setVoiceId(v[0].voice_id);
+        setLoadVoices(false);
+      }).catch(function(){setVoiceError("No se pudo conectar con ElevenLabs. Verifica tu API key.");setLoadVoices(false);});
+    }
+  },[config.elevenlabsKey]);
+
+  const generateAudioForScene=async function(e){
+    setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
+    try{
+      const audioUrl=await generateSpeech(e.guion,voiceId,config);
+      setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
+    }catch(err){setError(err.message);}
+    setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
+  };
+
+  const generateAudioFull=async function(){
+    if(!script||!script.escenas)return;
+    for(const e of script.escenas){
+      await generateAudioForScene(e);
+    }
+  };
 
   const generate=async function(){
     if(!topic.trim())return;
@@ -508,6 +564,22 @@ function ShortsPage(props){
           <div style={{fontSize:12,color:"#7878a0",marginTop:4}}>⏱ {script.duracion_total}</div>
           {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
         </div>
+
+        {config.elevenlabsKey?<div className="card">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio con ElevenLabs</div>
+          {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
+          {loadVoices&&<div style={{fontSize:13,color:"#7878a0"}}>Cargando voces...</div>}
+          {voices.length>0&&<div className="frow">
+            <div className="fi" style={{flex:2}}>
+              <label className="lbl">Voz</label>
+              <select className="inp" value={voiceId} onChange={function(e){setVoiceId(e.target.value);}}>
+                {voices.map(function(v){return <option key={v.voice_id} value={v.voice_id}>{v.name}</option>;})}
+              </select>
+            </div>
+            <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
+          </div>}
+        </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
+
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div className="sh">
@@ -517,6 +589,10 @@ function ShortsPage(props){
             <span className="lbl">Guion</span>
             <div className="stxt">{e.guion}</div>
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.guion}/></div>
+            {config.elevenlabsKey&&voiceId&&<div style={{marginBottom:10}}>
+              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){generateAudioForScene(e);}} disabled={genAudioLoading[e.numero]}>{genAudioLoading[e.numero]?"Generando audio...":"🎙️ Generar audio de esta escena"}</button>
+              {genAudio[e.numero]&&<audio controls src={genAudio[e.numero]} style={{width:"100%",marginTop:8}}/>}
+            </div>}
             <span className="lbl">Prompt Veo3 / Runway / Sora</span>
             <div className="pbox">{e.prompt_video}</div>
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.prompt_video}/></div>
@@ -538,7 +614,7 @@ function ShortsPage(props){
       </div>}
     </div>
   );
-            }
+              }
 function LongFormPage(props){
   const config = props.config;
   const [topic,setTopic]=useState("");
