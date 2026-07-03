@@ -679,7 +679,7 @@ function ShortsPage(props){
       const hookData=JSON.parse(r3.replace(/```json|```/g,"").trim());
 
       setLoadingStep("Paso 4/4 — Desarrollando guion completo y cierre...");
-      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"}]}\nSolo JSON sin markdown.";
+      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara busqueda_clip usa una descripcion especifica en ingles de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nSolo JSON sin markdown.";
       const text=await callClaude(p4,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
@@ -694,7 +694,7 @@ function ShortsPage(props){
     setLoading(true);setError("");setScript(null);setClips({});
     setLoadingStep("Analizando tu guion y dividiendo en escenas...");
     try{
-      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para cada escena genera un prompt de video en ingles y una keyword de busqueda de stock footage en ingles.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
+      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para cada escena genera un prompt de video en ingles y una keyword de busqueda de stock footage en ingles con descripcion especifica de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
@@ -728,15 +728,69 @@ function ShortsPage(props){
     setOwnAudioUrl(url);
   };
 
-  const pickClipUrl=function(numero){
-    const sel=selectedClip[numero];
+  const getClipKey=function(src,idx){return src+"_"+idx;};
+
+  const getClipDuration=function(numero,src,idx){
     const cl=clips[numero];
-    if(!cl)return null;
-    if(sel&&sel.src==="px"&&cl.px&&cl.px[sel.idx])return cl.px[sel.idx].video_files&&cl.px[sel.idx].video_files[0]?cl.px[sel.idx].video_files[0].link:null;
-    if(sel&&sel.src==="pb"&&cl.pb&&cl.pb[sel.idx])return cl.pb[sel.idx].videos&&cl.pb[sel.idx].videos.small?cl.pb[sel.idx].videos.small.url:null;
-    if(cl.px&&cl.px[0])return cl.px[0].video_files&&cl.px[0].video_files[0]?cl.px[0].video_files[0].link:null;
-    if(cl.pb&&cl.pb[0])return cl.pb[0].videos&&cl.pb[0].videos.small?cl.pb[0].videos.small.url:null;
-    return null;
+    if(!cl)return 0;
+    if(src==="px"&&cl.px&&cl.px[idx])return cl.px[idx].duration||8;
+    if(src==="pb"&&cl.pb&&cl.pb[idx])return cl.pb[idx].duration||8;
+    return 8;
+  };
+
+  const toggleClip=function(numero,src,idx){
+    setSelectedClip(function(p){
+      const np=Object.assign({},p);
+      const current=np[numero]?np[numero].slice():[];
+      const key=getClipKey(src,idx);
+      const existingPos=current.findIndex(function(c){return c.key===key;});
+      if(existingPos>=0){
+        current.splice(existingPos,1);
+      }else{
+        current.push({key:key,src:src,idx:idx});
+      }
+      np[numero]=current;
+      return np;
+    });
+  };
+
+  const getSelectedOrder=function(numero,src,idx){
+    const list=selectedClip[numero];
+    if(!list)return 0;
+    const key=getClipKey(src,idx);
+    const pos=list.findIndex(function(c){return c.key===key;});
+    return pos>=0?pos+1:0;
+  };
+
+  const getSceneNeededSeconds=function(e){
+    const m=e.duracion&&e.duracion.match(/(\d+)/g);
+    if(!m)return 8;
+    const nums=m.map(Number);
+    return nums.length>1?Math.max.apply(null,nums):nums[0];
+  };
+
+  const getSelectedSeconds=function(numero){
+    const list=selectedClip[numero];
+    if(!list||!list.length)return 0;
+    let total=0;
+    list.forEach(function(c){total+=getClipDuration(numero,c.src,c.idx);});
+    return total;
+  };
+
+  const pickClipUrls=function(numero){
+    const list=selectedClip[numero];
+    const cl=clips[numero];
+    if(!cl)return [];
+    if(list&&list.length){
+      return list.map(function(c){
+        if(c.src==="px"&&cl.px&&cl.px[c.idx])return cl.px[c.idx].video_files&&cl.px[c.idx].video_files[0]?cl.px[c.idx].video_files[0].link:null;
+        if(c.src==="pb"&&cl.pb&&cl.pb[c.idx])return cl.pb[c.idx].videos&&cl.pb[c.idx].videos.small?cl.pb[c.idx].videos.small.url:null;
+        return null;
+      }).filter(Boolean);
+    }
+    if(cl.px&&cl.px[0])return [cl.px[0].video_files&&cl.px[0].video_files[0]?cl.px[0].video_files[0].link:null].filter(Boolean);
+    if(cl.pb&&cl.pb[0])return [cl.pb[0].videos&&cl.pb[0].videos.small?cl.pb[0].videos.small.url:null].filter(Boolean);
+    return [];
   };
 
   const runAssembly=async function(){
@@ -746,9 +800,9 @@ function ShortsPage(props){
       if(!script||!script.escenas)throw new Error("No hay guion generado.");
       const clipList=[];
       for(const e of script.escenas){
-        const url=pickClipUrl(e.numero);
-        if(!url)throw new Error("Falta un clip para la escena "+e.numero+". Busca o selecciona un clip primero.");
-        clipList.push({url:url});
+        const urls=pickClipUrls(e.numero);
+        if(!urls.length)throw new Error("Falta un clip para la escena "+e.numero+". Selecciona al menos un clip primero.");
+        urls.forEach(function(u){clipList.push({url:u});});
       }
       let audioSrc=ownAudioUrl||"";
       if(!audioSrc){
@@ -775,7 +829,7 @@ function ShortsPage(props){
 
       {mode==="ai"&&<div className="card">
         <div className="frow">
-          <div className="fi" style={{flex:3}}><label className="lbl">Tema</label><input className="inp" placeholder="El silencio que transforma..." value={topic} onChange={function(e){setTopic(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")generate();}}/></div>
+          <div className="fi" style={{flex:3}}><label className="lbl">Frase o Tema</label><input className="inp" placeholder="El silencio que transforma..." value={topic} onChange={function(e){setTopic(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")generate();}}/></div>
           <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={lang} onChange={function(e){setLang(e.target.value);}}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
           <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={function(e){setStyle(e.target.value);}}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
           <button className="btn bg" onClick={generate} disabled={loading||!topic.trim()}>{loading?"⏳":"⚡ Generar"}</button>
@@ -837,6 +891,7 @@ function ShortsPage(props){
             })()}
           </div>}
         </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
+
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div className="sh">
@@ -858,27 +913,35 @@ function ShortsPage(props){
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
             </div>
             {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automáticamente...</div>}
+            {clips[e.numero]&&(function(){
+              const needed=getSceneNeededSeconds(e);
+              const selected=getSelectedSeconds(e.numero);
+              const covered=selected>=needed;
+              return <div style={{fontSize:12,marginBottom:8,color:covered?"#22c55e":"#f0b429",fontWeight:600}}>{covered?"✓ ":"⚠ "}Duración seleccionada: {selected}s / Necesita: {needed}s</div>;
+            })()}
             {clips[e.numero]&&<div className="cgrid">
               {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v,idx){
-                const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="px"&&selectedClip[e.numero].idx===idx;
-                const isDefault=!selectedClip[e.numero]&&idx===0;
-                const used=isSel||isDefault;
+                const order=getSelectedOrder(e.numero,"px",idx);
+                const isDefaultShown=!selectedClip[e.numero]||!selectedClip[e.numero].length;
+                const showAsFirst=isDefaultShown&&idx===0;
+                const used=order>0||showAsFirst;
                 return <div key={v.id} className="ci" style={{border:used?"2px solid #22c55e":"2px solid transparent"}}>
                   <video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/>
-                  <span className="csrc">Pexels</span>
-                  <button onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"px",idx:idx};return np;});}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:10,fontWeight:700,padding:"4px 8px",borderRadius:4,border:"none",cursor:"pointer"}}>{used?"✓ USADO":"Elegir"}</button>
+                  <span className="csrc">Pexels {v.duration?"· "+v.duration+"s":""}</span>
+                  <button onClick={function(){toggleClip(e.numero,"px",idx);}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:11,fontWeight:700,width:26,height:26,borderRadius:13,border:"none",cursor:"pointer"}}>{order>0?order:(showAsFirst?"1":"+")}</button>
                 </div>;
               })}
               {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v,idx){
-                const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="pb"&&selectedClip[e.numero].idx===idx;
-                return <div key={v.id} className="ci" style={{border:isSel?"2px solid #22c55e":"2px solid transparent"}}>
+                const order=getSelectedOrder(e.numero,"pb",idx);
+                const used=order>0;
+                return <div key={v.id} className="ci" style={{border:used?"2px solid #22c55e":"2px solid transparent"}}>
                   <video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/>
-                  <span className="csrc">Pixabay</span>
-                  <button onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"pb",idx:idx};return np;});}} style={{position:"absolute",top:4,left:4,background:isSel?"#22c55e":"rgba(0,0,0,0.75)",color:isSel?"#0a0a0f":"white",fontSize:10,fontWeight:700,padding:"4px 8px",borderRadius:4,border:"none",cursor:"pointer"}}>{isSel?"✓ USADO":"Elegir"}</button>
+                  <span className="csrc">Pixabay {v.duration?"· "+v.duration+"s":""}</span>
+                  <button onClick={function(){toggleClip(e.numero,"pb",idx);}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:11,fontWeight:700,width:26,height:26,borderRadius:13,border:"none",cursor:"pointer"}}>{order>0?order:"+"}</button>
                 </div>;
               })}
             </div>}
-            {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca "Elegir" en un clip para usarlo en esta escena. Por defecto se usa el primero.</div>}
+            {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca el número en cada clip para agregarlo en orden (1, 2, 3...) hasta cubrir la duración necesaria. Sin selección se usa el primero.</div>}
           </div>;
         })}
         <div className="card">
@@ -918,7 +981,7 @@ function ShortsPage(props){
       </div>}
     </div>
   );
-                         }
+      }
 function LongFormPage(props){
   const config = props.config;
   const [topic,setTopic]=useState("");
@@ -964,7 +1027,7 @@ function LongFormPage(props){
       <div className="psub">Script por escenas con prompts y clips para 10-60 minutos.</div>
       <div className="card">
         <div className="frow">
-          <div className="fi" style={{flex:3}}><label className="lbl">Tema</label><input className="inp" placeholder="La disciplina como camino espiritual..." value={topic} onChange={function(e){setTopic(e.target.value);}}/></div>
+          <div className="fi" style={{flex:3}}><label className="lbl">Frase o Tema</label><input className="inp" placeholder="La disciplina como camino espiritual..." value={topic} onChange={function(e){setTopic(e.target.value);}}/></div>
           <div className="fi"><label className="lbl">Duración</label><select className="inp" value={duration} onChange={function(e){setDuration(e.target.value);}}>
             <option value="10">10 min</option>
             <option value="15">15 min</option>
@@ -1058,4 +1121,4 @@ export default function App(){
       </div>
     </div>
   );
-}
+        }
