@@ -104,6 +104,81 @@ function formatNumber(n) {
 }
 function outlierScore(views,subs){return(!subs||subs===0)?0:(views/subs).toFixed(1);}
 
+let ffmpegInstance=null;
+function loadScript(src){
+  return new Promise(function(resolve,reject){
+    const s=document.createElement("script");
+    s.src=src;
+    s.type="module";
+    s.onload=resolve;
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+async function loadFFmpegLib(){
+  if(ffmpegInstance)return ffmpegInstance;
+  if(!window.__ffmpegWasmReady){
+    const wrapperCode=[
+      "import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.10';",
+      "import { toBlobURL, fetchFile } from 'https://esm.sh/@ffmpeg/util@0.12.1';",
+      "window.__FFmpegClass = FFmpeg;",
+      "window.__ffmpegToBlobURL = toBlobURL;",
+      "window.__ffmpegFetchFile = fetchFile;",
+      "window.__ffmpegWasmReady = true;",
+      "window.dispatchEvent(new Event('ffmpegwasmready'));"
+    ].join("\n");
+    const blob=new Blob([wrapperCode],{type:"text/javascript"});
+    const url=URL.createObjectURL(blob);
+    await new Promise(function(resolve,reject){
+      window.addEventListener("ffmpegwasmready",resolve,{once:true});
+      loadScript(url).catch(reject);
+      setTimeout(function(){reject(new Error("Tiempo de espera agotado cargando FFmpeg."));},30000);
+    });
+  }
+  const ffmpeg=new window.__FFmpegClass();
+  const baseURL="https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
+  await ffmpeg.load({
+    coreURL: await window.__ffmpegToBlobURL(baseURL+"/ffmpeg-core.js","text/javascript"),
+    wasmURL: await window.__ffmpegToBlobURL(baseURL+"/ffmpeg-core.wasm","application/wasm"),
+  });
+  ffmpegInstance={ffmpeg:ffmpeg,fetchFile:window.__ffmpegFetchFile};
+  return ffmpegInstance;
+}
+
+async function assembleVideo(clipsWithDuration, audioUrl, onProgress){
+  const inst=await loadFFmpegLib();
+  const ffmpeg=inst.ffmpeg;
+  const fetchFile=inst.fetchFile;
+  onProgress("Descargando clips...");
+  const clipNames=[];
+  for(let i=0;i<clipsWithDuration.length;i++){
+    const c=clipsWithDuration[i];
+    const name="clip"+i+".mp4";
+    const data=await fetchFile(c.url);
+    await ffmpeg.writeFile(name,data);
+    clipNames.push(name);
+  }
+  onProgress("Preparando audio...");
+  if(audioUrl){
+    const audioData=await fetchFile(audioUrl);
+    await ffmpeg.writeFile("audio.mp3",audioData);
+  }
+  onProgress("Uniendo clips...");
+  const listContent=clipNames.map(function(n){return "file '"+n+"'";}).join("\n");
+  await ffmpeg.writeFile("list.txt",listContent);
+  await ffmpeg.exec(["-f","concat","-safe","0","-i","list.txt","-c","copy","-y","merged.mp4"]);
+  onProgress("Sincronizando con audio...");
+  if(audioUrl){
+    await ffmpeg.exec(["-i","merged.mp4","-i","audio.mp3","-c:v","copy","-map","0:v:0","-map","1:a:0","-shortest","-y","final.mp4"]);
+  }else{
+    await ffmpeg.exec(["-i","merged.mp4","-c","copy","-y","final.mp4"]);
+  }
+  onProgress("Finalizando...");
+  const outputData=await ffmpeg.readFile("final.mp4");
+  const blob=new Blob([outputData.buffer],{type:"video/mp4"});
+  return URL.createObjectURL(blob);
+}
+
 const C = {
   bg:"#0a0a0f",surf:"#111118",card:"#16161f",bord:"#222230",
   acc:"#6c3fff",accS:"#6c3fff22",accH:"#8b5fff",
@@ -185,7 +260,6 @@ const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400
 + ".modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;z-index:1000;padding:20px 16px;overflow-y:auto;}"
 + ".modalbox{background:#16161f;border:1px solid #222230;border-radius:14px;padding:22px;max-width:520px;width:100%;margin-top:20px;margin-bottom:20px;}"
 + "@media(max-width:900px){.sidebar{width:56px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.nitem{justify-content:center;padding:12px 0;}.main{margin-left:56px;padding:16px 14px;width:calc(100% - 56px);}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;align-items:stretch;}.fi{min-width:100%;}.ptitle{font-size:20px;}.cgrid{grid-template-columns:repeat(2,1fr);}}";
-
 function CopyBtn(props){
   const text = props.text;
   const [c,setC]=useState(false);
@@ -367,7 +441,6 @@ function ConfigPage(props){
     </div>
   );
 }
-
 function ResearchPage(props){
   const config = props.config;
   const [query,setQuery]=useState("");
@@ -462,7 +535,7 @@ function ResearchPage(props){
       </div>}
     </div>
   );
-                    }
+}
 function AnalyzerPage(props){
   const config = props.config;
   const [url,setUrl]=useState("");
@@ -546,6 +619,12 @@ function ShortsPage(props){
   const [voiceError,setVoiceError]=useState("");
   const [genAudio,setGenAudio]=useState({});
   const [genAudioLoading,setGenAudioLoading]=useState({});
+  const [selectedClip,setSelectedClip]=useState({});
+  const [assembling,setAssembling]=useState(false);
+  const [assembleProgress,setAssembleProgress]=useState("");
+  const [assembledUrl,setAssembledUrl]=useState("");
+  const [assembleError,setAssembleError]=useState("");
+  const [showAssembleWarning,setShowAssembleWarning]=useState(false);
 
   useEffect(function(){
     if(config.elevenlabsKey){
@@ -649,6 +728,39 @@ function ShortsPage(props){
     setOwnAudioUrl(url);
   };
 
+  const pickClipUrl=function(numero){
+    const sel=selectedClip[numero];
+    const cl=clips[numero];
+    if(!cl)return null;
+    if(sel&&sel.src==="px"&&cl.px&&cl.px[sel.idx])return cl.px[sel.idx].video_files&&cl.px[sel.idx].video_files[0]?cl.px[sel.idx].video_files[0].link:null;
+    if(sel&&sel.src==="pb"&&cl.pb&&cl.pb[sel.idx])return cl.pb[sel.idx].videos&&cl.pb[sel.idx].videos.small?cl.pb[sel.idx].videos.small.url:null;
+    if(cl.px&&cl.px[0])return cl.px[0].video_files&&cl.px[0].video_files[0]?cl.px[0].video_files[0].link:null;
+    if(cl.pb&&cl.pb[0])return cl.pb[0].videos&&cl.pb[0].videos.small?cl.pb[0].videos.small.url:null;
+    return null;
+  };
+
+  const runAssembly=async function(){
+    setShowAssembleWarning(false);
+    setAssembling(true);setAssembleError("");setAssembledUrl("");
+    try{
+      if(!script||!script.escenas)throw new Error("No hay guion generado.");
+      const clipList=[];
+      for(const e of script.escenas){
+        const url=pickClipUrl(e.numero);
+        if(!url)throw new Error("Falta un clip para la escena "+e.numero+". Busca o selecciona un clip primero.");
+        clipList.push({url:url});
+      }
+      let audioSrc=ownAudioUrl||"";
+      if(!audioSrc){
+        const first=script.escenas[0];
+        if(genAudio[first.numero])audioSrc=genAudio[first.numero];
+      }
+      const resultUrl=await assembleVideo(clipList,audioSrc,function(msg){setAssembleProgress(msg);});
+      setAssembledUrl(resultUrl);
+    }catch(e){setAssembleError(e.message||"Error ensamblando el video.");}
+    setAssembling(false);setAssembleProgress("");
+  };
+
   const sc={HOOK:"#f0b429",DESARROLLO:"#6c3fff",CIERRE:"#22c55e"};
 
   return(
@@ -734,19 +846,65 @@ function ShortsPage(props){
             </div>
             {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automáticamente...</div>}
             {clips[e.numero]&&<div className="cgrid">
-              {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/><span className="csrc">Pexels</span></div>;})}
-              {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/><span className="csrc">Pixabay</span></div>;})}
+              {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v,idx){
+                const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="px"&&selectedClip[e.numero].idx===idx;
+                const isDefault=!selectedClip[e.numero]&&idx===0;
+                return <div key={v.id} className="ci" style={{border:(isSel||isDefault)?"2px solid #22c55e":"2px solid transparent",cursor:"pointer"}} onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"px",idx:idx};return np;});}}>
+                  <video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/>
+                  <span className="csrc">Pexels</span>
+                  {(isSel||isDefault)&&<span style={{position:"absolute",top:4,left:4,background:"#22c55e",color:"#0a0a0f",fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4}}>✓ USADO</span>}
+                </div>;
+              })}
+              {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v,idx){
+                const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="pb"&&selectedClip[e.numero].idx===idx;
+                return <div key={v.id} className="ci" style={{border:isSel?"2px solid #22c55e":"2px solid transparent",cursor:"pointer"}} onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"pb",idx:idx};return np;});}}>
+                  <video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/>
+                  <span className="csrc">Pixabay</span>
+                  {isSel&&<span style={{position:"absolute",top:4,left:4,background:"#22c55e",color:"#0a0a0f",fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4}}>✓ USADO</span>}
+                </div>;
+              })}
             </div>}
+            {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca un clip para elegirlo para esta escena. Por defecto se usa el primero.</div>}
           </div>;
         })}
         <div className="card">
           <span className="lbl">Script completo</span>
           <div className="stxt" style={{marginTop:8}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" - "+e.duracion+"]\n"+e.guion;}).join("\n\n"):""}</div>
         </div>
+
+        <div className="card" style={{borderColor:"#f0b429"}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>🎬 Ensamblar video final</div>
+          <div style={{fontSize:12,color:"#7878a0",marginBottom:14,lineHeight:1.6}}>Une los clips seleccionados con el audio en un solo video MP4 descargable, directamente en tu navegador.</div>
+          <div className="alert ainf" style={{fontSize:12}}>⚠️ Esta función procesa video dentro del navegador. Funciona mejor en computadora. En celular puede ser lenta o fallar por memoria limitada — usa wifi y no cambies de app mientras procesa.</div>
+          {assembleError&&<div className="alert aerr">⚠️ {assembleError}</div>}
+          {!assembling&&!assembledUrl&&<button className="btn bg" onClick={function(){setShowAssembleWarning(true);}} style={{width:"100%",justifyContent:"center"}}>🎬 Ensamblar video</button>}
+          {assembling&&<div className="loader"><div className="spin"/><span>{assembleProgress||"Procesando..."}</span></div>}
+          {assembledUrl&&<div>
+            <video controls src={assembledUrl} style={{width:"100%",borderRadius:10,marginBottom:12}}/>
+            <a href={assembledUrl} download="viralscript-short.mp4" className="btn bp" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>⬇️ Descargar video</a>
+          </div>}
+        </div>
+
+        {showAssembleWarning&&<div className="modal" onClick={function(){setShowAssembleWarning(false);}}>
+          <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
+            <div style={{fontSize:17,fontWeight:700,marginBottom:14}}>⚠️ Antes de continuar</div>
+            <div style={{fontSize:13,color:"#e8e8f0",lineHeight:1.7,marginBottom:20}}>
+              El ensamblado de video corre dentro de tu navegador y consume bastante memoria y batería. En computadora suele tardar 10-30 segundos para un Short. En celular puede tardar más o incluso fallar si la memoria es limitada.<br/><br/>
+              Recomendaciones:<br/>
+              • Usa wifi, no datos móviles<br/>
+              • No cambies de app mientras procesa<br/>
+              • Si falla, prueba desde una computadora
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn bs" style={{flex:1,justifyContent:"center"}} onClick={function(){setShowAssembleWarning(false);}}>Cancelar</button>
+              <button className="btn bg" style={{flex:1,justifyContent:"center"}} onClick={runAssembly}>Continuar</button>
+            </div>
+          </div>
+        </div>}
       </div>}
     </div>
   );
-}
+                         }
 function LongFormPage(props){
   const config = props.config;
   const [topic,setTopic]=useState("");
