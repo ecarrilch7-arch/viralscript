@@ -813,17 +813,30 @@ function ShortsPage(props){
           <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio con ElevenLabs</div>
           {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
           {loadVoices&&<div style={{fontSize:13,color:"#7878a0"}}>Cargando voces...</div>}
-          {voices.length>0&&<div className="frow">
-            <div className="fi" style={{flex:2}}>
-              <label className="lbl">Voz</label>
-              <select className="inp" value={voiceId} onChange={function(e){setVoiceId(e.target.value);}}>
-                {voices.map(function(v){return <option key={v.voice_id} value={v.voice_id}>{v.name}</option>;})}
-              </select>
+          {voices.length>0&&<div>
+            <div className="frow">
+              <div className="fi" style={{flex:2}}>
+                <label className="lbl">Voz</label>
+                <select className="inp" value={voiceId} onChange={function(e){setVoiceId(e.target.value);}}>
+                  {voices.map(function(v){
+                    const lang=v.labels&&(v.labels.language||v.labels.accent);
+                    const label=v.name+(lang?" — "+lang:"");
+                    return <option key={v.voice_id} value={v.voice_id}>{label}</option>;
+                  })}
+                </select>
+              </div>
+              <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
             </div>
-            <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
+            {(function(){
+              const sel=voices.find(function(v){return v.voice_id===voiceId;});
+              if(!sel)return null;
+              return <div style={{display:"flex",alignItems:"center",gap:10,marginTop:4}}>
+                {sel.preview_url&&<audio controls src={sel.preview_url} style={{height:32}}/>}
+                {sel.labels&&sel.labels.description&&<span style={{fontSize:12,color:"#7878a0"}}>{sel.labels.description}</span>}
+              </div>;
+            })()}
           </div>}
         </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
-
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div className="sh">
