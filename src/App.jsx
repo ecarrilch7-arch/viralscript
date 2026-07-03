@@ -849,22 +849,23 @@ function ShortsPage(props){
               {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v,idx){
                 const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="px"&&selectedClip[e.numero].idx===idx;
                 const isDefault=!selectedClip[e.numero]&&idx===0;
-                return <div key={v.id} className="ci" style={{border:(isSel||isDefault)?"2px solid #22c55e":"2px solid transparent",cursor:"pointer"}} onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"px",idx:idx};return np;});}}>
+                const used=isSel||isDefault;
+                return <div key={v.id} className="ci" style={{border:used?"2px solid #22c55e":"2px solid transparent"}}>
                   <video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/>
                   <span className="csrc">Pexels</span>
-                  {(isSel||isDefault)&&<span style={{position:"absolute",top:4,left:4,background:"#22c55e",color:"#0a0a0f",fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4}}>✓ USADO</span>}
+                  <button onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"px",idx:idx};return np;});}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:10,fontWeight:700,padding:"4px 8px",borderRadius:4,border:"none",cursor:"pointer"}}>{used?"✓ USADO":"Elegir"}</button>
                 </div>;
               })}
               {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v,idx){
                 const isSel=selectedClip[e.numero]&&selectedClip[e.numero].src==="pb"&&selectedClip[e.numero].idx===idx;
-                return <div key={v.id} className="ci" style={{border:isSel?"2px solid #22c55e":"2px solid transparent",cursor:"pointer"}} onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"pb",idx:idx};return np;});}}>
+                return <div key={v.id} className="ci" style={{border:isSel?"2px solid #22c55e":"2px solid transparent"}}>
                   <video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/>
                   <span className="csrc">Pixabay</span>
-                  {isSel&&<span style={{position:"absolute",top:4,left:4,background:"#22c55e",color:"#0a0a0f",fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4}}>✓ USADO</span>}
+                  <button onClick={function(){setSelectedClip(function(p){const np=Object.assign({},p);np[e.numero]={src:"pb",idx:idx};return np;});}} style={{position:"absolute",top:4,left:4,background:isSel?"#22c55e":"rgba(0,0,0,0.75)",color:isSel?"#0a0a0f":"white",fontSize:10,fontWeight:700,padding:"4px 8px",borderRadius:4,border:"none",cursor:"pointer"}}>{isSel?"✓ USADO":"Elegir"}</button>
                 </div>;
               })}
             </div>}
-            {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca un clip para elegirlo para esta escena. Por defecto se usa el primero.</div>}
+            {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca "Elegir" en un clip para usarlo en esta escena. Por defecto se usa el primero.</div>}
           </div>;
         })}
         <div className="card">
