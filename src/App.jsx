@@ -6,6 +6,17 @@ function loadConfig() {
 }
 function saveConfig(cfg) { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
 
+const CHANNELS_KEY = "viralscript_channels";
+function loadChannels() {
+  try { const raw = localStorage.getItem(CHANNELS_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
+function saveChannels(channels) { localStorage.setItem(CHANNELS_KEY, JSON.stringify(channels)); }
+const ACTIVE_CHANNEL_KEY = "viralscript_active_channel";
+function loadActiveChannelId() {
+  try { return localStorage.getItem(ACTIVE_CHANNEL_KEY) || null; } catch { return null; }
+}
+function saveActiveChannelId(id) { localStorage.setItem(ACTIVE_CHANNEL_KEY, id); }
+
 const LANGUAGES = [
   { code: "es-latam", label: "Español neutro latinoamericano" },
   { code: "es-es", label: "Español (España)" },
@@ -168,6 +179,11 @@ const css = "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400
 + ".tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}"
 + ".tab{padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #222230;background:#16161f;color:#7878a0;transition:all 0.15s;}"
 + ".tab.active{background:#6c3fff;color:white;border-color:#6c3fff;}"
++ ".chcard{background:#111118;border:2px solid #222230;border-radius:10px;padding:16px;margin-bottom:12px;position:relative;}"
++ ".chcard.chactive{border-color:#22c55e;background:#22c55e0d;}"
++ ".chbadge{position:absolute;top:12px;right:12px;font-size:10px;font-weight:700;background:#22c55e;color:#0a0a0f;padding:3px 10px;border-radius:20px;}"
++ ".modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;z-index:1000;padding:20px 16px;overflow-y:auto;}"
++ ".modalbox{background:#16161f;border:1px solid #222230;border-radius:14px;padding:22px;max-width:520px;width:100%;margin-top:20px;margin-bottom:20px;}"
 + "@media(max-width:900px){.sidebar{width:56px;}.slogo .ltxt,.slogo .lsub,.nitem span{display:none;}.nitem{justify-content:center;padding:12px 0;}.main{margin-left:56px;padding:16px 14px;width:calc(100% - 56px);}.g2,.g3{grid-template-columns:1fr;}.frow{flex-direction:column;align-items:stretch;}.fi{min-width:100%;}.ptitle{font-size:20px;}.cgrid{grid-template-columns:repeat(2,1fr);}}";
 
 function CopyBtn(props){
@@ -178,6 +194,13 @@ function CopyBtn(props){
 
 function Sidebar(props){
   const page = props.page, setPage = props.setPage, configured = props.configured;
+  const [activeName,setActiveName]=useState("");
+  useEffect(function(){
+    const channels=loadChannels();
+    const activeId=loadActiveChannelId();
+    const active=channels.find(function(c){return c.id===activeId;});
+    setActiveName(active?active.name:"");
+  },[page]);
   const nav=[
     {id:"config",icon:"⚙️",label:"Configuración"},
     {id:"research",icon:"🔍",label:"Investigar Nichos",req:true},
@@ -190,6 +213,7 @@ function Sidebar(props){
       <div className="slogo">
         <div className="ltxt"><span className="lacc">Viral</span>Script</div>
         <div className="lsub">CONTENT STUDIO</div>
+        {activeName&&<div style={{fontSize:11,color:"#22c55e",marginTop:8,fontWeight:600}}>📺 {activeName}</div>}
       </div>
       {nav.map(function(n){
         return <div key={n.id} className={"nitem" + (page===n.id?" active":"")}
@@ -200,14 +224,99 @@ function Sidebar(props){
       })}
     </div>
   );
-  }
+}
+function ChannelForm(props){
+  const initial = props.initial || {name:"",niche:"",language:"es-latam",style:"reflexivo",youtubeUrl:""};
+  const onSave = props.onSave, onCancel = props.onCancel;
+  const [form,setForm]=useState(initial);
+  const f=function(k){return function(e){setForm(function(p){const np=Object.assign({},p);np[k]=e.target.value;return np;});};};
+  const ok=form.name&&form.name.trim();
+  return(
+    <div className="modal" onClick={onCancel}>
+      <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
+        <div style={{fontSize:17,fontWeight:700,marginBottom:16}}>{initial.id?"✏️ Editar canal":"➕ Nuevo canal"}</div>
+        <div style={{marginBottom:14}}>
+          <label className="lbl">Nombre del canal</label>
+          <input className="inp" placeholder="Viaje al Interior..." value={form.name} onChange={f("name")}/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label className="lbl">Nicho principal</label>
+          <input className="inp" placeholder="Espiritualidad, finanzas..." value={form.niche} onChange={f("niche")}/>
+        </div>
+        <div className="g2" style={{marginBottom:14}}>
+          <div><label className="lbl">Idioma</label><select className="inp" value={form.language} onChange={f("language")}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
+          <div><label className="lbl">Estilo</label><select className="inp" value={form.style} onChange={f("style")}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <label className="lbl">URL del canal de YouTube (opcional)</label>
+          <input className="inp" placeholder="https://youtube.com/@..." value={form.youtubeUrl||""} onChange={f("youtubeUrl")}/>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button className="btn bs" style={{flex:1,justifyContent:"center"}} onClick={onCancel}>Cancelar</button>
+          <button className="btn bp" style={{flex:1,justifyContent:"center"}} onClick={function(){if(ok)onSave(form);}} disabled={!ok}>Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",language:"es-latam",style:"reflexivo",channelName:"",niche:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:""});
   const [saved,setSaved]=useState(false);
+  const [channels,setChannels]=useState(loadChannels());
+  const [activeId,setActiveId]=useState(loadActiveChannelId());
+  const [editingChannel,setEditingChannel]=useState(null);
+  const [showForm,setShowForm]=useState(false);
+
+  useEffect(function(){
+    if(channels.length===0&&config&&(config.channelName||config.niche)){
+      const migrated=[{id:"ch_"+Date.now(),name:config.channelName||"Mi canal",niche:config.niche||"",language:config.language||"es-latam",style:config.style||"reflexivo",youtubeUrl:""}];
+      setChannels(migrated);
+      saveChannels(migrated);
+      setActiveId(migrated[0].id);
+      saveActiveChannelId(migrated[0].id);
+    }
+  },[]);
+
   const save=function(){saveConfig(form);setConfig(form);setSaved(true);setTimeout(function(){setSaved(false);},2000);};
   const f=function(k){return function(e){setForm(function(p){const np=Object.assign({},p);np[k]=e.target.value;return np;});};};
   const ok=form.youtubeKey&&form.pexelsKey&&form.anthropicKey;
+
+  const openNewChannel=function(){setEditingChannel(null);setShowForm(true);};
+  const openEditChannel=function(ch){setEditingChannel(ch);setShowForm(true);};
+  const closeForm=function(){setShowForm(false);setEditingChannel(null);};
+
+  const saveChannel=function(data){
+    let updated;
+    if(data.id){
+      updated=channels.map(function(c){return c.id===data.id?data:c;});
+    }else{
+      const withId=Object.assign({},data,{id:"ch_"+Date.now()});
+      updated=channels.concat([withId]);
+      if(channels.length===0){setActiveId(withId.id);saveActiveChannelId(withId.id);}
+    }
+    setChannels(updated);
+    saveChannels(updated);
+    closeForm();
+  };
+
+  const deleteChannel=function(id){
+    const updated=channels.filter(function(c){return c.id!==id;});
+    setChannels(updated);
+    saveChannels(updated);
+    if(activeId===id){
+      const newActive=updated.length?updated[0].id:null;
+      setActiveId(newActive);
+      saveActiveChannelId(newActive);
+    }
+  };
+
+  const activateChannel=function(id){
+    setActiveId(id);
+    saveActiveChannelId(id);
+  };
+
   return(
     <div>
       <div className="ptitle">Configuración</div>
@@ -222,16 +331,39 @@ function ConfigPage(props){
           </div>;
         })}
       </div>
+      <button className="btn bp" onClick={save} disabled={!ok} style={{width:"100%",justifyContent:"center",padding:14,marginBottom:24}}>{ok?"💾 Guardar configuración":"Completa las API keys para continuar"}</button>
+
       <div className="card">
-        <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🎙️ Preferencias</div>
-        <div className="g2">
-          <div><label className="lbl">Idioma</label><select className="inp" value={form.language} onChange={f("language")}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
-          <div><label className="lbl">Estilo</label><select className="inp" value={form.style} onChange={f("style")}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
-          <div><label className="lbl">Nombre del canal</label><input className="inp" placeholder="Mi canal..." value={form.channelName||""} onChange={f("channelName")}/></div>
-          <div><label className="lbl">Nicho principal</label><input className="inp" placeholder="Espiritualidad..." value={form.niche||""} onChange={f("niche")}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>
+          <div style={{fontSize:15,fontWeight:700}}>📺 Canales</div>
+          <button className="btn bp" style={{fontSize:12,padding:"6px 14px"}} onClick={openNewChannel}>➕ Agregar canal</button>
         </div>
+        {channels.length===0&&<div style={{fontSize:13,color:"#7878a0",padding:"10px 0"}}>No tienes canales todavía. Agrega uno para empezar a generar contenido personalizado.</div>}
+        {channels.map(function(ch){
+          const isActive=ch.id===activeId;
+          const langObj=LANGUAGES.find(function(l){return l.code===ch.language;});
+          const styleObj=STYLES.find(function(s){return s.code===ch.style;});
+          return(
+            <div key={ch.id} className={"chcard"+(isActive?" chactive":"")}>
+              {isActive&&<span className="chbadge">ACTIVO</span>}
+              <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>{ch.name}</div>
+              <div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>{ch.niche||"Sin nicho definido"}</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                <span className="tag ta">{langObj?langObj.label:ch.language}</span>
+                <span className="tag tg">{styleObj?styleObj.label:ch.style}</span>
+              </div>
+              {ch.youtubeUrl&&<div style={{fontSize:12,color:"#6c3fff",marginBottom:12,wordBreak:"break-all"}}>🔗 {ch.youtubeUrl}</div>}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {!isActive&&<button className="btn bp" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){activateChannel(ch.id);}}>✓ Usar este canal</button>}
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){openEditChannel(ch);}}>✏️ Editar</button>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px",color:"#fca5a5"}} onClick={function(){deleteChannel(ch.id);}}>🗑️ Eliminar</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      <button className="btn bp" onClick={save} disabled={!ok} style={{width:"100%",justifyContent:"center",padding:14}}>{ok?"💾 Guardar configuración":"Completa las API keys para continuar"}</button>
+
+      {showForm&&<ChannelForm initial={editingChannel} onSave={saveChannel} onCancel={closeForm}/>}
     </div>
   );
 }
@@ -249,7 +381,7 @@ function ResearchPage(props){
   const genKw=async function(){
     setLoadKw(true);
     try{
-      const p="Genera 8 keywords en ingles para buscar videos virales de YouTube en el nicho de " + JSON.stringify(config.niche||"desarrollo personal") + ". Canales faceless, videos largos. Responde SOLO con JSON array de strings.";
+      const p="Genera 8 keywords en ingles para buscar videos virales de YouTube en el nicho de "+JSON.stringify(config.niche||"desarrollo personal")+". Canales faceless, videos largos. Responde SOLO con JSON array de strings.";
       const t=await callClaude(p,config);
       setAiKw(JSON.parse(t.replace(/```json|```/g,"").trim()));
     }catch(err){setAiKw(defKw.slice(0,8));}
@@ -264,7 +396,7 @@ function ResearchPage(props){
       const ids=items.map(function(i){return i.id?i.id.videoId:null;}).filter(Boolean);
       const chIds=Array.from(new Set(items.map(function(i){return i.snippet?i.snippet.channelId:null;}).filter(Boolean)));
       const results=await Promise.all([getVideoStats(ids,config),getChannelStats(chIds,config)]);
-      const stats=results[0], channels=results[1];
+      const stats=results[0],channels=results[1];
       const chMap={};
       channels.forEach(function(c){chMap[c.id]=parseInt((c.statistics&&c.statistics.subscriberCount)||0);});
       const enriched=stats.map(function(v){
@@ -311,7 +443,7 @@ function ResearchPage(props){
           const score=parseFloat(v.score);
           return(
             <div key={v.id} className="vc">
-              <div className="vt" onClick={function(){window.open("https://youtube.com/watch?v="+v.id,'_blank');}}>{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
+              <div className="vt" onClick={function(){window.open("https://youtube.com/watch?v="+v.id,"_blank");}}>{thumb&&<img src={thumb} alt=""/>}<span className="vd">{formatDuration(v.dur)}</span>{score>5&&<span className="ob">🔥 {score}x</span>}</div>
               <div className="vi">
                 <div className="vtit">{v.snippet?v.snippet.title:""}</div>
                 <div style={{fontSize:11,color:"#7878a0",marginBottom:8}}>{v.snippet?v.snippet.channelTitle:""} · {formatNumber(v.subs)} subs</div>
@@ -320,8 +452,8 @@ function ResearchPage(props){
                   <div><div style={{fontSize:18,fontWeight:700,color:score>10?"#f0b429":"#6c3fff"}}>{score}x</div><div style={{fontSize:11,color:"#7878a0"}}>outlier</div></div>
                 </div>
                 <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={function(){window.open("https://youtube.com/watch?v="+v.id,'_blank');}}>▶ Ver</button>
-                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={function(){navigator.clipboard.writeText("https://youtube.com/watch?v="+v.id);alert('URL copiada — pégala en Analizar Video');}}>🎯 Copiar URL</button>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",flex:1}} onClick={function(){window.open("https://youtube.com/watch?v="+v.id,"_blank");}}>▶ Ver</button>
+                  <button className="btn bp" style={{fontSize:11,padding:"4px 10px",flex:2}} onClick={function(){navigator.clipboard.writeText("https://youtube.com/watch?v="+v.id);alert("URL copiada — pégala en Analizar Video");}}>🎯 Copiar URL</button>
                 </div>
               </div>
             </div>
@@ -330,7 +462,7 @@ function ResearchPage(props){
       </div>}
     </div>
   );
-    }
+                    }
 function AnalyzerPage(props){
   const config = props.config;
   const [url,setUrl]=useState("");
@@ -614,7 +746,7 @@ function ShortsPage(props){
       </div>}
     </div>
   );
-              }
+}
 function LongFormPage(props){
   const config = props.config;
   const [topic,setTopic]=useState("");
@@ -721,18 +853,30 @@ function LongFormPage(props){
 export default function App(){
   const [config,setConfig]=useState(null);
   const [page,setPage]=useState("config");
+  const [activeChannelTick,setActiveChannelTick]=useState(0);
   useEffect(function(){
     const s=loadConfig();
     if(s&&s.youtubeKey&&s.anthropicKey){setConfig(s);setPage("research");}
   },[]);
   const handleConfig=function(cfg){setConfig(cfg);if(cfg.youtubeKey&&cfg.anthropicKey)setPage("research");};
   const configured=!!(config&&config.youtubeKey&&config.anthropicKey);
+
+  const getEffectiveConfig=function(){
+    if(!config)return config;
+    const channels=loadChannels();
+    const activeId=loadActiveChannelId();
+    const active=channels.find(function(c){return c.id===activeId;});
+    if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||""});
+    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name});
+  };
+  const effectiveConfig=getEffectiveConfig();
+
   let pageContent;
   if(page==="config")pageContent=<ConfigPage config={config} setConfig={handleConfig}/>;
-  else if(page==="research")pageContent=<ResearchPage config={config}/>;
-  else if(page==="analyzer")pageContent=<AnalyzerPage config={config}/>;
-  else if(page==="shorts")pageContent=<ShortsPage config={config}/>;
-  else if(page==="longform")pageContent=<LongFormPage config={config}/>;
+  else if(page==="research")pageContent=<ResearchPage config={effectiveConfig}/>;
+  else if(page==="analyzer")pageContent=<AnalyzerPage config={effectiveConfig}/>;
+  else if(page==="shorts")pageContent=<ShortsPage config={effectiveConfig}/>;
+  else if(page==="longform")pageContent=<LongFormPage config={effectiveConfig}/>;
   return(
     <div>
       <style>{css}</style>
