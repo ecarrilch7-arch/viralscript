@@ -86,6 +86,26 @@ async function generateSpeech(text, voiceId, config) {
   if (!res.ok || data.error) throw new Error(data.error || "Error generando audio. Verifica tu API key o si se agotaron tus creditos gratuitos de ElevenLabs.");
   return "data:audio/mpeg;base64," + data.audioBase64;
 }
+async function getGeminiVoices(config) {
+  const res = await fetch("/api/gemini-tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "voices", apiKey: config.geminiKey }),
+  });
+  if (!res.ok) throw new Error("Error obteniendo voces de Gemini.");
+  const data = await res.json();
+  return data.voices || [];
+}
+async function generateSpeechGemini(text, voiceName, config) {
+  const res = await fetch("/api/gemini-tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "speak", apiKey: config.geminiKey, voiceId: voiceName, text: text }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Error generando audio con Gemini. Verifica tu API key.");
+  return "data:audio/wav;base64," + data.audioBase64;
+}
 
 function parseDuration(iso) {
   const m = iso && iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -336,7 +356,7 @@ function ChannelForm(props){
 
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:""});
   const [saved,setSaved]=useState(false);
   const [channels,setChannels]=useState(loadChannels());
   const [activeId,setActiveId]=useState(loadActiveChannelId());
@@ -398,7 +418,7 @@ function ConfigPage(props){
       {saved&&<div className="alert aok">✓ Guardado correctamente.</div>}
       <div className="card">
         <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🔑 API Keys</div>
-        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"}].map(function(item){
+        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."}].map(function(item){
           return <div key={item.k} style={{marginBottom:14}}>
             <label className="lbl">{item.l}</label>
             <input className="inp" type="password" placeholder={item.p} value={form[item.k]||""} onChange={f(item.k)}/>
@@ -613,6 +633,7 @@ function ShortsPage(props){
   const [ownScript,setOwnScript]=useState("");
   const [ownAudioName,setOwnAudioName]=useState("");
   const [ownAudioUrl,setOwnAudioUrl]=useState("");
+  const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
   const [voices,setVoices]=useState([]);
   const [voiceId,setVoiceId]=useState("");
   const [loadVoices,setLoadVoices]=useState(false);
@@ -627,20 +648,32 @@ function ShortsPage(props){
   const [showAssembleWarning,setShowAssembleWarning]=useState(false);
 
   useEffect(function(){
-    if(config.elevenlabsKey){
+    setVoiceError("");
+    setVoices([]);
+    setVoiceId("");
+    if(voiceProvider==="eleven"&&config.elevenlabsKey){
       setLoadVoices(true);
       getElevenLabsVoices(config).then(function(v){
         setVoices(v);
-        if(v.length&&!voiceId)setVoiceId(v[0].voice_id);
+        if(v.length)setVoiceId(v[0].voice_id);
         setLoadVoices(false);
       }).catch(function(){setVoiceError("No se pudo conectar con ElevenLabs. Verifica tu API key.");setLoadVoices(false);});
     }
-  },[config.elevenlabsKey]);
+    if(voiceProvider==="gemini"&&config.geminiKey){
+      setLoadVoices(true);
+      getGeminiVoices(config).then(function(names){
+        const v=names.map(function(n){return {voice_id:n,name:n};});
+        setVoices(v);
+        if(v.length)setVoiceId(v[0].voice_id);
+        setLoadVoices(false);
+      }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
+    }
+  },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
 
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const audioUrl=await generateSpeech(e.guion,voiceId,config);
+      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(e.guion,voiceId,config):await generateSpeech(e.guion,voiceId,config);
       setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
     }catch(err){setError(err.message);}
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -863,8 +896,15 @@ function ShortsPage(props){
           {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
         </div>
 
-        {config.elevenlabsKey?<div className="card">
-          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio con ElevenLabs</div>
+        {(config.elevenlabsKey||config.geminiKey)?<div className="card">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio</div>
+          {config.elevenlabsKey&&config.geminiKey&&<div style={{marginBottom:12}}>
+            <label className="lbl">Proveedor de voz</label>
+            <select className="inp" value={voiceProvider} onChange={function(e){setVoiceProvider(e.target.value);}}>
+              <option value="eleven">ElevenLabs</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </div>}
           {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
           {loadVoices&&<div style={{fontSize:13,color:"#7878a0"}}>Cargando voces...</div>}
           {voices.length>0&&<div>
@@ -901,7 +941,7 @@ function ShortsPage(props){
             <span className="lbl">Guion</span>
             <div className="stxt">{e.guion}</div>
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.guion}/></div>
-            {config.elevenlabsKey&&voiceId&&<div style={{marginBottom:10}}>
+            {(config.elevenlabsKey||config.geminiKey)&&voiceId&&<div style={{marginBottom:10}}>
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){generateAudioForScene(e);}} disabled={genAudioLoading[e.numero]}>{genAudioLoading[e.numero]?"Generando audio...":"🎙️ Generar audio de esta escena"}</button>
               {genAudio[e.numero]&&<audio controls src={genAudio[e.numero]} style={{width:"100%",marginTop:8}}/>}
             </div>}
@@ -1115,4 +1155,10 @@ export default function App(){
   return(
     <div>
       <style>{css}</style>
-      <div className="app"
+      <div className="app">
+        <Sidebar page={page} setPage={setPage} configured={configured}/>
+        <div className="main">{pageContent}</div>
+      </div>
+    </div>
+  );
+        }
