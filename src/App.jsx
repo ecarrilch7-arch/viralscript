@@ -1115,10 +1115,4 @@ export default function App(){
   return(
     <div>
       <style>{css}</style>
-      <div className="app">
-        <Sidebar page={page} setPage={setPage} configured={configured}/>
-        <div className="main">{pageContent}</div>
-      </div>
-    </div>
-  );
-        }
+      <div className="app"
