@@ -44,7 +44,8 @@ export default async function handler(req, res) {
 
     if (action === "speak") {
       const voiceName = req.body.voiceId || "Kore";
-      const text = req.body.text;
+      const rawText = req.body.text;
+      const text = "TTS the following text exactly as written, in the same language, do not add or respond with anything else: " + rawText;
       const model = "gemini-2.5-flash-preview-tts";
       const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey;
 
