@@ -917,6 +917,14 @@ function ShortsPage(props){
           {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
         </div>
 
+        <div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span className="lbl">Guion completo</span>
+            <button className="btn bs" style={{fontSize:12,padding:"4px 10px"}} onClick={function(){const full=script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):"";navigator.clipboard.writeText(full);}}>📋 Copiar todo</button>
+          </div>
+          <div className="stxt" style={{marginTop:8,whiteSpace:"pre-wrap"}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
+        </div>
+
         {(config.elevenlabsKey||config.geminiKey)?<div className="card">
           <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio</div>
           {config.elevenlabsKey&&config.geminiKey&&<div style={{marginBottom:12}}>
