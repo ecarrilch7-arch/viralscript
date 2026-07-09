@@ -86,6 +86,15 @@ async function generateSpeech(text, voiceId, config) {
   if (!res.ok || data.error) throw new Error(data.error || "Error generando audio. Verifica tu API key o si se agotaron tus creditos gratuitos de ElevenLabs.");
   return "data:audio/mpeg;base64," + data.audioBase64;
 }
+const GEMINI_VOICE_DESC={
+  Zephyr:"Brillante",Puck:"Enérgica",Charon:"Informativa",Kore:"Firme",Fenrir:"Excitable",
+  Leda:"Juvenil",Orus:"Firme",Aoede:"Fresca",Callirrhoe:"Relajada",Autonoe:"Brillante",
+  Enceladus:"Susurrante",Iapetus:"Clara",Umbriel:"Relajada",Algieba:"Suave",Despina:"Suave",
+  Erinome:"Clara",Algenib:"Grave y rasposa",Rasalgethi:"Informativa",Laomedeia:"Enérgica",
+  Achernar:"Suave",Alnilam:"Firme",Schedar:"Pareja",Gacrux:"Madura",Pulcherrima:"Directa",
+  Achird:"Amigable",Zubenelgenubi:"Casual",Vindemiatrix:"Gentil",Sadachbia:"Animada",
+  Sadaltager:"Con autoridad",Sulafat:"Cálida"
+};
 async function getGeminiVoices(config) {
   const res = await fetch("/api/gemini-tts", {
     method: "POST",
@@ -662,7 +671,7 @@ function ShortsPage(props){
     if(voiceProvider==="gemini"&&config.geminiKey){
       setLoadVoices(true);
       getGeminiVoices(config).then(function(names){
-        const v=names.map(function(n){return {voice_id:n,name:n};});
+        const v=names.map(function(n){return {voice_id:n,name:n,desc:GEMINI_VOICE_DESC[n]||""};});
         setVoices(v);
         if(v.length)setVoiceId(v[0].voice_id);
         setLoadVoices(false);
@@ -914,7 +923,8 @@ function ShortsPage(props){
                 <select className="inp" value={voiceId} onChange={function(e){setVoiceId(e.target.value);}}>
                   {voices.map(function(v){
                     const lang=v.labels&&(v.labels.language||v.labels.accent);
-                    const label=v.name+(lang?" — "+lang:"");
+                    const extra=lang?(" — "+lang):(v.desc?(" — "+v.desc):"");
+                    const label=v.name+extra;
                     return <option key={v.voice_id} value={v.voice_id}>{label}</option>;
                   })}
                 </select>
