@@ -87,13 +87,13 @@ async function generateSpeech(text, voiceId, config) {
   return "data:audio/mpeg;base64," + data.audioBase64;
 }
 const GEMINI_VOICE_DESC={
-  Zephyr:"Brillante",Puck:"Enérgica",Charon:"Informativa",Kore:"Firme",Fenrir:"Excitable",
-  Leda:"Juvenil",Orus:"Firme",Aoede:"Fresca",Callirrhoe:"Relajada",Autonoe:"Brillante",
-  Enceladus:"Susurrante",Iapetus:"Clara",Umbriel:"Relajada",Algieba:"Suave",Despina:"Suave",
-  Erinome:"Clara",Algenib:"Grave y rasposa",Rasalgethi:"Informativa",Laomedeia:"Enérgica",
-  Achernar:"Suave",Alnilam:"Firme",Schedar:"Pareja",Gacrux:"Madura",Pulcherrima:"Directa",
-  Achird:"Amigable",Zubenelgenubi:"Casual",Vindemiatrix:"Gentil",Sadachbia:"Animada",
-  Sadaltager:"Con autoridad",Sulafat:"Cálida"
+  Zephyr:"Brillante y clara",Puck:"Enérgica y alegre",Charon:"Informativa, tipo narrador",Kore:"Firme y segura",Fenrir:"Excitable, muy expresiva",
+  Leda:"Juvenil y fresca",Orus:"Firme, tono serio",Aoede:"Fresca y ligera",Callirrhoe:"Relajada, tono conversacional",Autonoe:"Brillante y optimista",
+  Enceladus:"Susurrante, muy suave",Iapetus:"Clara y articulada",Umbriel:"Relajada y neutra",Algieba:"Suave y agradable",Despina:"Suave y fluida",
+  Erinome:"Clara y precisa",Algenib:"Grave y rasposa",Rasalgethi:"Informativa, tono profesional",Laomedeia:"Enérgica y animada",
+  Achernar:"Suave y delicada",Alnilam:"Firme y fuerte",Schedar:"Pareja, tono estable",Gacrux:"Madura y con experiencia",Pulcherrima:"Directa y expresiva",
+  Achird:"Amigable y cercana",Zubenelgenubi:"Casual, tono relajado",Vindemiatrix:"Gentil y cálida",Sadachbia:"Animada y vivaz",
+  Sadaltager:"Con autoridad, tono experto",Sulafat:"Cálida y acogedora"
 };
 async function getGeminiVoices(config) {
   const res = await fetch("/api/gemini-tts", {
@@ -643,6 +643,8 @@ function ShortsPage(props){
   const [ownAudioName,setOwnAudioName]=useState("");
   const [ownAudioUrl,setOwnAudioUrl]=useState("");
   const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
+  const [previewLoading,setPreviewLoading]=useState(false);
+  const [previewError,setPreviewError]=useState("");
   const [voices,setVoices]=useState([]);
   const [voiceId,setVoiceId]=useState("");
   const [loadVoices,setLoadVoices]=useState(false);
@@ -678,6 +680,16 @@ function ShortsPage(props){
       }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
     }
   },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
+
+  const previewGeminiVoice=async function(){
+    setPreviewLoading(true);setPreviewError("");
+    try{
+      const audioUrl=await generateSpeechGemini("Hola, así suena mi voz.",voiceId,config);
+      const audio=new Audio(audioUrl);
+      audio.play();
+    }catch(err){setPreviewError(err.message);}
+    setPreviewLoading(false);
+  };
 
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
@@ -931,6 +943,10 @@ function ShortsPage(props){
               </div>
               <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
             </div>
+            {voiceProvider==="gemini"&&voiceId&&<div style={{marginTop:8}}>
+              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={previewGeminiVoice} disabled={previewLoading}>{previewLoading?"Generando...":"🔊 Probar esta voz"}</button>
+              {previewError&&<div style={{fontSize:12,color:"#e05252",marginTop:6}}>⚠️ {previewError}</div>}
+            </div>}
             {(function(){
               const sel=voices.find(function(v){return v.voice_id===voiceId;});
               if(!sel)return null;
