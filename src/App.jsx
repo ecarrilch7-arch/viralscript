@@ -652,6 +652,8 @@ function ShortsPage(props){
   const [genAudio,setGenAudio]=useState({});
   const [genAudioLoading,setGenAudioLoading]=useState({});
   const [selectedClip,setSelectedClip]=useState({});
+  const [videoSource,setVideoSource]=useState({});
+  const [customClip,setCustomClip]=useState({});
   const [assembling,setAssembling]=useState(false);
   const [assembleProgress,setAssembleProgress]=useState("");
   const [assembledUrl,setAssembledUrl]=useState("");
@@ -784,6 +786,13 @@ function ShortsPage(props){
 
   const getClipKey=function(src,idx){return src+"_"+idx;};
 
+  const handleCustomClipUpload=function(evt,numero){
+    const file=evt.target.files[0];
+    if(!file)return;
+    const url=URL.createObjectURL(file);
+    setCustomClip(function(p){const np=Object.assign({},p);np[numero]={url:url,name:file.name};return np;});
+  };
+
   const getClipDuration=function(numero,src,idx){
     const cl=clips[numero];
     if(!cl)return 0;
@@ -832,6 +841,7 @@ function ShortsPage(props){
   };
 
   const pickClipUrls=function(numero){
+    if(customClip[numero])return [customClip[numero].url];
     const list=selectedClip[numero];
     const cl=clips[numero];
     if(!cl)return [];
@@ -920,9 +930,9 @@ function ShortsPage(props){
         <div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span className="lbl">Guion completo</span>
-            <button className="btn bs" style={{fontSize:12,padding:"4px 10px"}} onClick={function(){const full=script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):"";navigator.clipboard.writeText(full);}}>📋 Copiar todo</button>
+            <button className="btn bs" style={{fontSize:12,padding:"4px 10px"}} onClick={function(){const full=script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.duracion+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):"";navigator.clipboard.writeText(full);}}>📋 Copiar todo</button>
           </div>
-          <div className="stxt" style={{marginTop:8,whiteSpace:"pre-wrap"}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
+          <div className="stxt" style={{marginTop:8,whiteSpace:"pre-wrap"}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.duracion+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
         </div>
 
         {(config.elevenlabsKey||config.geminiKey)?<div className="card">
@@ -982,6 +992,11 @@ function ShortsPage(props){
             <span className="lbl">Prompt Veo3 / Runway / Sora</span>
             <div className="pbox">{e.prompt_video}</div>
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.prompt_video}/></div>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <button className="btn bs" style={{fontSize:12,padding:"5px 12px",background:(videoSource[e.numero]||"stock")==="stock"?"#6c3fff":"transparent",color:(videoSource[e.numero]||"stock")==="stock"?"#fff":"#a0a0c0"}} onClick={function(){setVideoSource(function(p){const np=Object.assign({},p);np[e.numero]="stock";return np;});}}>🎞️ Stock</button>
+              <button className="btn bs" style={{fontSize:12,padding:"5px 12px",background:videoSource[e.numero]==="ai"?"#6c3fff":"transparent",color:videoSource[e.numero]==="ai"?"#fff":"#a0a0c0"}} onClick={function(){setVideoSource(function(p){const np=Object.assign({},p);np[e.numero]="ai";return np;});}}>✨ IA generativa</button>
+            </div>
+            {(videoSource[e.numero]||"stock")==="stock"&&<div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
@@ -1016,6 +1031,17 @@ function ShortsPage(props){
               })}
             </div>}
             {clips[e.numero]&&<div style={{fontSize:11,color:"#7878a0",marginTop:6}}>Toca el número en cada clip para agregarlo en orden (1, 2, 3...) hasta cubrir la duración necesaria. Sin selección se usa el primero.</div>}
+            </div>}
+            {videoSource[e.numero]==="ai"&&<div>
+              <label className="btn bs" style={{cursor:"pointer",fontSize:12,display:"inline-flex"}}>
+                📤 Subir clip generado
+                <input type="file" accept="video/*" style={{display:"none"}} onChange={function(evt){handleCustomClipUpload(evt,e.numero);}}/>
+              </label>
+              {customClip[e.numero]?<div style={{marginTop:10}}>
+                <video src={customClip[e.numero].url} controls style={{width:"100%",borderRadius:8}}/>
+                <div style={{fontSize:11,color:"#22c55e",marginTop:4}}>✓ {customClip[e.numero].name}</div>
+              </div>:<div style={{fontSize:12,color:"#7878a0",marginTop:8,lineHeight:1.6}}>Genera el clip pegando el prompt de arriba en Flow, Leonardo u otra IA de video, descargalo, y subilo aca.</div>}
+            </div>}
           </div>;
         })}
         <div className="card">
