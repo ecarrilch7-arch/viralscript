@@ -627,16 +627,46 @@ function AnalyzerPage(props){
     </div>
   );
 }
+const SHORTS_HISTORY_KEY="viralscript_shorts_history";
+function loadShortsHistory(){
+  try{const raw=localStorage.getItem(SHORTS_HISTORY_KEY);return raw?JSON.parse(raw):[];}catch(e){return [];}
+}
+function saveToShortsHistory(script){
+  try{
+    const list=loadShortsHistory();
+    list.unshift({id:Date.now(),titulo:script.titulo,fecha:new Date().toISOString(),script:script});
+    const trimmed=list.slice(0,15);
+    localStorage.setItem(SHORTS_HISTORY_KEY,JSON.stringify(trimmed));
+  }catch(e){}
+}
+function deleteFromShortsHistory(id){
+  try{
+    const list=loadShortsHistory().filter(function(h){return h.id!==id;});
+    localStorage.setItem(SHORTS_HISTORY_KEY,JSON.stringify(list));
+    return list;
+  }catch(e){return [];}
+}
+
 function ShortsPage(props){
   const config = props.config;
   const [mode,setMode]=useState("ai");
   const [topic,setTopic]=useState("");
   const [lang,setLang]=useState(config.language);
   const [style,setStyle]=useState(config.style);
+  const [characterStyle,setCharacterStyle]=useState("");
   const [loading,setLoading]=useState(false);
   const [loadingStep,setLoadingStep]=useState("");
   const [error,setError]=useState("");
-  const [script,setScript]=useState(null);
+  const [script,setScript]=useState(function(){
+    const h=loadShortsHistory();
+    return h.length?h[0].script:null;
+  });
+  const [restoredFromHistory,setRestoredFromHistory]=useState(function(){
+    const h=loadShortsHistory();
+    return h.length>0;
+  });
+  const [showHistory,setShowHistory]=useState(false);
+  const [history,setHistory]=useState(function(){return loadShortsHistory();});
   const [clips,setClips]=useState({});
   const [loadClips,setLoadClips]=useState({});
   const [ownScript,setOwnScript]=useState("");
@@ -711,7 +741,7 @@ function ShortsPage(props){
 
   const generate=async function(){
     if(!topic.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
@@ -735,11 +765,14 @@ function ShortsPage(props){
       const hookData=JSON.parse(r3.replace(/```json|```/g,"").trim());
 
       setLoadingStep("Paso 4/4 — Desarrollando guion completo y cierre...");
-      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara busqueda_clip usa una descripcion especifica en ingles de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nSolo JSON sin markdown.";
+      const charLine=characterStyle.trim()?("\\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
+      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip usa una descripcion especifica en ingles de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nSolo JSON sin markdown.";
       const text=await callClaude(p4,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
       setScript(finalScript);
+      saveToShortsHistory(finalScript);
+      setHistory(loadShortsHistory());
       autoFetchAllClips(finalScript);
     }catch(e){setError("Error generando. Verifica tu Anthropic API key y saldo.");}
     setLoading(false);setLoadingStep("");
@@ -747,14 +780,16 @@ function ShortsPage(props){
 
   const useOwnScript=async function(){
     if(!ownScript.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
     setLoadingStep("Analizando tu guion y dividiendo en escenas...");
     try{
-      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para cada escena genera un prompt de video en ingles y una keyword de busqueda de stock footage en ingles con descripcion especifica de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
+      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Genera tambien una keyword de busqueda de stock footage en ingles con descripcion especifica de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
       setScript(finalScript);
+      saveToShortsHistory(finalScript);
+      setHistory(loadShortsHistory());
       autoFetchAllClips(finalScript);
     }catch(e){setError("Error procesando tu guion. Verifica tu Anthropic API key.");}
     setLoading(false);setLoadingStep("");
@@ -766,6 +801,10 @@ function ShortsPage(props){
       fetchClips(e);
     }
   };
+
+  useEffect(function(){
+    if(script)autoFetchAllClips(script);
+  },[]);
 
   const fetchClips=async function(e){
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
@@ -883,8 +922,32 @@ function ShortsPage(props){
 
   return(
     <div>
-      <div className="ptitle">⚡ Generar Short</div>
-      <div className="psub">Script completo con prompts y clips para cada escena.</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div>
+          <div className="ptitle">⚡ Generar Short</div>
+          <div className="psub">Script completo con prompts y clips para cada escena.</div>
+        </div>
+        <button className="btn bs" style={{fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={function(){setHistory(loadShortsHistory());setShowHistory(true);}}>🕒 Historial ({history.length})</button>
+      </div>
+
+      {showHistory&&<div className="modal" onClick={function(){setShowHistory(false);}}>
+        <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
+          <div style={{fontSize:17,fontWeight:700,marginBottom:14}}>🕒 Historial de guiones</div>
+          {history.length===0&&<div style={{fontSize:13,color:"#7878a0"}}>Todavía no generaste ningún guion.</div>}
+          {history.map(function(h){
+            const d=new Date(h.fecha);
+            const fechaStr=d.toLocaleDateString()+" "+d.toLocaleTimeString().slice(0,5);
+            return <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #2a2a3e"}}>
+              <div style={{flex:1,cursor:"pointer"}} onClick={function(){setScript(h.script);autoFetchAllClips(h.script);setShowHistory(false);}}>
+                <div style={{fontSize:13,fontWeight:600}}>{h.titulo}</div>
+                <div style={{fontSize:11,color:"#7878a0"}}>{fechaStr}</div>
+              </div>
+              <button onClick={function(){setHistory(deleteFromShortsHistory(h.id));}} style={{background:"transparent",border:"none",color:"#e05252",fontSize:16,cursor:"pointer",padding:"4px 8px"}}>🗑️</button>
+            </div>;
+          })}
+          <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:16}} onClick={function(){setShowHistory(false);}}>Cerrar</button>
+        </div>
+      </div>}
 
       <div className="tabs">
         <button className={"tab"+(mode==="ai"?" active":"")} onClick={function(){setMode("ai");}}>✨ Generar con IA</button>
@@ -897,6 +960,11 @@ function ShortsPage(props){
           <div className="fi"><label className="lbl">Idioma</label><select className="inp" value={lang} onChange={function(e){setLang(e.target.value);}}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
           <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={function(e){setStyle(e.target.value);}}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
           <button className="btn bg" onClick={generate} disabled={loading||!topic.trim()}>{loading?"⏳":"⚡ Generar"}</button>
+        </div>
+        <div style={{marginTop:12}}>
+          <label className="lbl">Personaje / estilo visual para los clips de IA (opcional)</label>
+          <input className="inp" placeholder="Ej: hombre adulto con barba y lentes, estilo selfie casero, luz calida" value={characterStyle} onChange={function(e){setCharacterStyle(e.target.value);}}/>
+          <div style={{fontSize:11,color:"#7878a0",marginTop:4}}>Si lo completas, todos los prompts Veo3/Runway/Sora de este guion van a describir el mismo personaje o estilo para mantener consistencia visual entre escenas.</div>
         </div>
       </div>}
 
@@ -921,6 +989,7 @@ function ShortsPage(props){
       {loading&&<div className="loader"><div className="spin"/><span>{loadingStep||"Procesando..."}</span></div>}
 
       {script&&<div>
+        {restoredFromHistory&&<div className="alert ainf" style={{fontSize:12,marginBottom:10}}>🕒 Este es tu último guion generado, restaurado automáticamente. <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={function(){setHistory(loadShortsHistory());setShowHistory(true);}}>Ver historial completo</span></div>}
         <div className="card" style={{borderColor:"#f0b429"}}>
           <div style={{fontSize:17,fontWeight:700}}>{script.titulo}</div>
           <div style={{fontSize:12,color:"#7878a0",marginTop:4}}>⏱ {script.duracion_total}</div>
