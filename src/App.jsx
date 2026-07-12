@@ -1,4 +1,38 @@
 import { useState, useEffect } from "react";
+import JSZip from "jszip";
+
+async function buildZip(entries, zipName) {
+  const zip = new JSZip();
+  for (const en of entries) {
+    try {
+      if (en.text !== undefined) {
+        zip.file(en.path, en.text);
+      } else {
+        const res = await fetch(en.url);
+        const blob = await res.blob();
+        zip.file(en.path, blob);
+      }
+    } catch (err) {}
+  }
+  const content = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(content);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = zipName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function padNum(n) { return n < 10 ? "0" + n : "" + n; }
+function extFromUrl(url) {
+  if (!url) return "mp4";
+  if (url.indexOf("data:audio/wav") === 0) return "wav";
+  if (url.indexOf("data:audio/mpeg") === 0) return "mp3";
+  const clean = url.split("?")[0];
+  const m = clean.match(/\.(\w+)$/);
+  return m ? m[1] : "mp4";
+}
 
 const STORAGE_KEY = "viralscript_config";
 function loadConfig() {
@@ -896,6 +930,39 @@ function ShortsPage(props){
     return [];
   };
 
+  const [zipLoading,setZipLoading]=useState(false);
+
+  const downloadSceneZip=async function(e){
+    setZipLoading(true);
+    try{
+      const entries=[{text:e.guion,path:"guion.txt"}];
+      const audioUrl=genAudio[e.numero];
+      if(audioUrl)entries.push({url:audioUrl,path:"audio."+extFromUrl(audioUrl)});
+      const clipUrls=pickClipUrls(e.numero);
+      clipUrls.forEach(function(u,i){entries.push({url:u,path:"clip_"+(i+1)+"."+extFromUrl(u)});});
+      await buildZip(entries,"escena_"+padNum(e.numero)+"_"+e.tipo+".zip");
+    }catch(err){}
+    setZipLoading(false);
+  };
+
+  const downloadAllZip=async function(){
+    if(!script||!script.escenas)return;
+    setZipLoading(true);
+    try{
+      const entries=[];
+      for(const e of script.escenas){
+        const folder="escena_"+padNum(e.numero)+"_"+e.tipo+"/";
+        entries.push({text:e.guion,path:folder+"guion.txt"});
+        const audioUrl=genAudio[e.numero];
+        if(audioUrl)entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});
+        const clipUrls=pickClipUrls(e.numero);
+        clipUrls.forEach(function(u,i){entries.push({url:u,path:folder+"clip_"+(i+1)+"."+extFromUrl(u)});});
+      }
+      await buildZip(entries,(script.titulo||"short")+".zip");
+    }catch(err){}
+    setZipLoading(false);
+  };
+
   const runAssembly=async function(){
     setShowAssembleWarning(false);
     setAssembling(true);setAssembleError("");setAssembledUrl("");
@@ -1002,6 +1069,7 @@ function ShortsPage(props){
             <button className="btn bs" style={{fontSize:12,padding:"4px 10px"}} onClick={function(){const full=script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.duracion+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):"";navigator.clipboard.writeText(full);}}>📋 Copiar todo</button>
           </div>
           <div className="stxt" style={{marginTop:8,whiteSpace:"pre-wrap"}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.duracion+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
+          <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:12}} onClick={downloadAllZip} disabled={zipLoading}>{zipLoading?"⏳ Preparando ZIP...":"📦 Descargar todo (audio + clips, por escena)"}</button>
         </div>
 
         {(config.elevenlabsKey||config.geminiKey)?<div className="card">
@@ -1111,6 +1179,7 @@ function ShortsPage(props){
                 <div style={{fontSize:11,color:"#22c55e",marginTop:4}}>✓ {customClip[e.numero].name}</div>
               </div>:<div style={{fontSize:12,color:"#7878a0",marginTop:8,lineHeight:1.6}}>Genera el clip pegando el prompt de arriba en Flow, Leonardo u otra IA de video, descargalo, y subilo aca.</div>}
             </div>}
+            <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:14,fontSize:12}} onClick={function(){downloadSceneZip(e);}} disabled={zipLoading}>{zipLoading?"⏳ Preparando...":"📦 Descargar esta escena (audio + clips)"}</button>
           </div>;
         })}
         <div className="card">
@@ -1151,21 +1220,130 @@ function ShortsPage(props){
     </div>
   );
       }
+const LONGFORM_HISTORY_KEY="viralscript_longform_history";
+function loadLongformHistory(){
+  try{const raw=localStorage.getItem(LONGFORM_HISTORY_KEY);return raw?JSON.parse(raw):[];}catch(e){return [];}
+}
+function saveToLongformHistory(script){
+  try{
+    const list=loadLongformHistory();
+    list.unshift({id:Date.now(),titulo:script.titulo,fecha:new Date().toISOString(),script:script});
+    const trimmed=list.slice(0,15);
+    localStorage.setItem(LONGFORM_HISTORY_KEY,JSON.stringify(trimmed));
+  }catch(e){}
+}
+function deleteFromLongformHistory(id){
+  try{
+    const list=loadLongformHistory().filter(function(h){return h.id!==id;});
+    localStorage.setItem(LONGFORM_HISTORY_KEY,JSON.stringify(list));
+    return list;
+  }catch(e){return [];}
+}
+
 function LongFormPage(props){
   const config = props.config;
+  const [mode,setMode]=useState("ai");
   const [topic,setTopic]=useState("");
   const [duration,setDuration]=useState("30");
   const [lang,setLang]=useState(config.language);
   const [style,setStyle]=useState(config.style);
+  const [characterStyle,setCharacterStyle]=useState("");
+  const [ownScript,setOwnScript]=useState("");
+  const [ownAudioName,setOwnAudioName]=useState("");
+  const [ownAudioUrl,setOwnAudioUrl]=useState("");
   const [loading,setLoading]=useState(false);
+  const [loadingStep,setLoadingStep]=useState("");
   const [error,setError]=useState("");
-  const [script,setScript]=useState(null);
+  const [script,setScript]=useState(function(){
+    const h=loadLongformHistory();
+    return h.length?h[0].script:null;
+  });
+  const [restoredFromHistory,setRestoredFromHistory]=useState(function(){
+    const h=loadLongformHistory();
+    return h.length>0;
+  });
+  const [showHistory,setShowHistory]=useState(false);
+  const [history,setHistory]=useState(function(){return loadLongformHistory();});
   const [clips,setClips]=useState({});
   const [loadClips,setLoadClips]=useState({});
+  const [selectedClip,setSelectedClip]=useState({});
+  const [videoSource,setVideoSource]=useState({});
+  const [customClip,setCustomClip]=useState({});
   const [open,setOpen]=useState(1);
+
+  const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
+  const [voices,setVoices]=useState([]);
+  const [voiceId,setVoiceId]=useState("");
+  const [loadVoices,setLoadVoices]=useState(false);
+  const [voiceError,setVoiceError]=useState("");
+  const [previewLoading,setPreviewLoading]=useState(false);
+  const [previewError,setPreviewError]=useState("");
+  const [genAudio,setGenAudio]=useState({});
+  const [genAudioLoading,setGenAudioLoading]=useState({});
+
+  useEffect(function(){
+    setVoiceError("");
+    setVoices([]);
+    setVoiceId("");
+    if(voiceProvider==="eleven"&&config.elevenlabsKey){
+      setLoadVoices(true);
+      getElevenLabsVoices(config).then(function(v){
+        setVoices(v);
+        if(v.length)setVoiceId(v[0].voice_id);
+        setLoadVoices(false);
+      }).catch(function(){setVoiceError("No se pudo conectar con ElevenLabs. Verifica tu API key.");setLoadVoices(false);});
+    }
+    if(voiceProvider==="gemini"&&config.geminiKey){
+      setLoadVoices(true);
+      getGeminiVoices(config).then(function(names){
+        const v=names.map(function(n){return {voice_id:n,name:n,desc:GEMINI_VOICE_DESC[n]||""};});
+        setVoices(v);
+        if(v.length)setVoiceId(v[0].voice_id);
+        setLoadVoices(false);
+      }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
+    }
+  },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
+
+  const autoFetchAllClips=async function(scr){
+    if(!scr||!scr.escenas)return;
+    for(const e of scr.escenas){
+      fetchClips(e);
+    }
+  };
+
+  useEffect(function(){
+    if(script)autoFetchAllClips(script);
+  },[]);
+
+  const previewVoice=async function(){
+    setPreviewLoading(true);setPreviewError("");
+    try{
+      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini("Hola, asi suena mi voz.",voiceId,config):await generateSpeech("Hola, asi suena mi voz.",voiceId,config);
+      const audio=new Audio(audioUrl);
+      audio.play();
+    }catch(err){setPreviewError(err.message);}
+    setPreviewLoading(false);
+  };
+
+  const generateAudioForScene=async function(e){
+    setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
+    try{
+      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(e.guion,voiceId,config):await generateSpeech(e.guion,voiceId,config);
+      setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
+    }catch(err){setError(err.message);}
+    setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
+  };
+
+  const generateAudioFull=async function(){
+    if(!script||!script.escenas)return;
+    for(const e of script.escenas){
+      await generateAudioForScene(e);
+    }
+  };
+
   const generate=async function(){
     if(!topic.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
@@ -1173,14 +1351,37 @@ function LongFormPage(props){
       const sL=sObj?sObj.label:"reflexivo";
       const durNum=parseInt(duration);
       const n=durNum>=60?8:durNum>=45?6:durNum>=30?5:durNum>=20?4:durNum>=15?3:2;
-      const prompt="Crea estructura de video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless.\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":\"keyword ingles\"}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
+      const charLine=characterStyle.trim()?("\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
+      const prompt="Crea estructura de video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":\"keyword ingles\"}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
-      setScript(JSON.parse(clean));
+      const finalScript=JSON.parse(clean);
+      setScript(finalScript);
       setOpen(1);
+      saveToLongformHistory(finalScript);
+      setHistory(loadLongformHistory());
+      autoFetchAllClips(finalScript);
     }catch(e){setError("Error generando. Verifica tu Anthropic API key.");}
     setLoading(false);
   };
+
+  const useOwnScript=async function(){
+    if(!ownScript.trim())return;
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
+    try{
+      const prompt="Toma este guion de video largo escrito por el usuario y dividelo en escenas (INTRO, DESARROLLO, CIERRE) sin modificar el texto original, solo organizandolo en bloques logicos segun los cambios de tema o parrafo. Para cada escena inventa un titulo_bloque corto. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra tipo de plano, sujeto y apariencia, entorno, mood, accion, iluminacion y estilo visual, sin corchetes, listo para pegar en Veo3, Runway o Sora. Genera tambien busqueda_clip con keyword de stock footage en ingles especifica (accion + contexto + movimiento).\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"descripcion\":\"resumen breve\",\"duracion_total\":\"estimado\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para este bloque\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en tantas escenas como haga falta segun el contenido. Solo JSON sin markdown.";
+      const text=await callClaude(prompt,config);
+      const clean=text.replace(/```json|```/g,"").trim();
+      const finalScript=JSON.parse(clean);
+      setScript(finalScript);
+      setOpen(1);
+      saveToLongformHistory(finalScript);
+      setHistory(loadLongformHistory());
+      autoFetchAllClips(finalScript);
+    }catch(e){setError("Error organizando el guion. Verifica tu Anthropic API key.");}
+    setLoading(false);
+  };
+
   const fetchClips=async function(e){
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
@@ -1189,12 +1390,132 @@ function LongFormPage(props){
     }catch(err){}
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
   };
+
+  const getClipKey=function(src,idx){return src+"_"+idx;};
+
+  const toggleClip=function(numero,src,idx){
+    setSelectedClip(function(p){
+      const np=Object.assign({},p);
+      const list=(np[numero]||[]).slice();
+      const key=getClipKey(src,idx);
+      const pos=list.indexOf(key);
+      if(pos>=0)list.splice(pos,1);else list.push(key);
+      np[numero]=list;
+      return np;
+    });
+  };
+  const getSelectedOrder=function(numero,src,idx){
+    const list=selectedClip[numero];
+    if(!list)return 0;
+    const key=getClipKey(src,idx);
+    const pos=list.indexOf(key);
+    return pos>=0?pos+1:0;
+  };
+
+  const handleAudioUpload=function(ev){
+    const file=ev.target.files&&ev.target.files[0];
+    if(!file)return;
+    setOwnAudioName(file.name);
+    const url=URL.createObjectURL(file);
+    setOwnAudioUrl(url);
+  };
+
+  const handleCustomClipUpload=function(evt,numero){
+    const file=evt.target.files[0];
+    if(!file)return;
+    const url=URL.createObjectURL(file);
+    setCustomClip(function(p){const np=Object.assign({},p);np[numero]={url:url,name:file.name};return np;});
+  };
+
+  const pickClipUrls=function(numero){
+    if(customClip[numero])return [customClip[numero].url];
+    const list=selectedClip[numero];
+    const cl=clips[numero];
+    if(!cl)return [];
+    if(list&&list.length){
+      return list.map(function(key){
+        const us=key.lastIndexOf("_");
+        const src=key.slice(0,us);
+        const idx=parseInt(key.slice(us+1));
+        if(src==="px"&&cl.px&&cl.px[idx])return cl.px[idx].video_files&&cl.px[idx].video_files[0]?cl.px[idx].video_files[0].link:null;
+        if(src==="pb"&&cl.pb&&cl.pb[idx])return cl.pb[idx].videos&&cl.pb[idx].videos.small?cl.pb[idx].videos.small.url:null;
+        return null;
+      }).filter(Boolean);
+    }
+    if(cl.px&&cl.px[0])return [cl.px[0].video_files&&cl.px[0].video_files[0]?cl.px[0].video_files[0].link:null].filter(Boolean);
+    if(cl.pb&&cl.pb[0])return [cl.pb[0].videos&&cl.pb[0].videos.small?cl.pb[0].videos.small.url:null].filter(Boolean);
+    return [];
+  };
+
+  const [zipLoading,setZipLoading]=useState(false);
+
+  const downloadSceneZip=async function(e){
+    setZipLoading(true);
+    try{
+      const entries=[{text:e.guion,path:"guion.txt"}];
+      const audioUrl=genAudio[e.numero];
+      if(audioUrl)entries.push({url:audioUrl,path:"audio."+extFromUrl(audioUrl)});
+      const clipUrls=pickClipUrls(e.numero);
+      clipUrls.forEach(function(u,i){entries.push({url:u,path:"clip_"+(i+1)+"."+extFromUrl(u)});});
+      await buildZip(entries,"bloque_"+padNum(e.numero)+"_"+e.tipo+".zip");
+    }catch(err){}
+    setZipLoading(false);
+  };
+
+  const downloadAllZip=async function(){
+    if(!script||!script.escenas)return;
+    setZipLoading(true);
+    try{
+      const entries=[];
+      for(const e of script.escenas){
+        const folder="bloque_"+padNum(e.numero)+"_"+e.tipo+"/";
+        entries.push({text:e.guion,path:folder+"guion.txt"});
+        const audioUrl=genAudio[e.numero];
+        if(audioUrl)entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});
+        const clipUrls=pickClipUrls(e.numero);
+        clipUrls.forEach(function(u,i){entries.push({url:u,path:folder+"clip_"+(i+1)+"."+extFromUrl(u)});});
+      }
+      await buildZip(entries,(script.titulo||"video_largo")+".zip");
+    }catch(err){}
+    setZipLoading(false);
+  };
+
   const sc={INTRO:"#f0b429",DESARROLLO:"#6c3fff",CIERRE:"#22c55e"};
   return(
     <div>
-      <div className="ptitle">📽️ Videos Largos</div>
-      <div className="psub">Script por escenas con prompts y clips para 10-60 minutos.</div>
-      <div className="card">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div>
+          <div className="ptitle">📽️ Videos Largos</div>
+          <div className="psub">Script por escenas con prompts y clips para 10-60 minutos.</div>
+        </div>
+        <button className="btn bs" style={{fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={function(){setHistory(loadLongformHistory());setShowHistory(true);}}>🕒 Historial ({history.length})</button>
+      </div>
+
+      {showHistory&&<div className="modal" onClick={function(){setShowHistory(false);}}>
+        <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
+          <div style={{fontSize:17,fontWeight:700,marginBottom:14}}>🕒 Historial de videos</div>
+          {history.length===0&&<div style={{fontSize:13,color:"#7878a0"}}>Todavia no generaste ningun video largo.</div>}
+          {history.map(function(h){
+            const d=new Date(h.fecha);
+            const fechaStr=d.toLocaleDateString()+" "+d.toLocaleTimeString().slice(0,5);
+            return <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #2a2a3e"}}>
+              <div style={{flex:1,cursor:"pointer"}} onClick={function(){setScript(h.script);autoFetchAllClips(h.script);setShowHistory(false);}}>
+                <div style={{fontSize:13,fontWeight:600}}>{h.titulo}</div>
+                <div style={{fontSize:11,color:"#7878a0"}}>{fechaStr}</div>
+              </div>
+              <button onClick={function(){setHistory(deleteFromLongformHistory(h.id));}} style={{background:"transparent",border:"none",color:"#e05252",fontSize:16,cursor:"pointer",padding:"4px 8px"}}>🗑️</button>
+            </div>;
+          })}
+          <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:16}} onClick={function(){setShowHistory(false);}}>Cerrar</button>
+        </div>
+      </div>}
+
+      <div className="tabs">
+        <button className={"tab"+(mode==="ai"?" active":"")} onClick={function(){setMode("ai");}}>✨ Generar con IA</button>
+        <button className={"tab"+(mode==="own"?" active":"")} onClick={function(){setMode("own");}}>📝 Ya tengo mi guion</button>
+      </div>
+
+      {mode==="ai"&&<div className="card">
         <div className="frow">
           <div className="fi" style={{flex:3}}><label className="lbl">Frase o Tema</label><input className="inp" placeholder="La disciplina como camino espiritual..." value={topic} onChange={function(e){setTopic(e.target.value);}}/></div>
           <div className="fi"><label className="lbl">Duración</label><select className="inp" value={duration} onChange={function(e){setDuration(e.target.value);}}>
@@ -1209,16 +1530,82 @@ function LongFormPage(props){
           <div className="fi"><label className="lbl">Estilo</label><select className="inp" value={style} onChange={function(e){setStyle(e.target.value);}}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
           <button className="btn bp" onClick={generate} disabled={loading||!topic.trim()} style={{alignSelf:"flex-end"}}>{loading?"⏳":"📽️ Generar"}</button>
         </div>
-      </div>
+        <div style={{marginTop:12}}>
+          <label className="lbl">Personaje / estilo visual para los clips de IA (opcional)</label>
+          <input className="inp" placeholder="Ej: mujer adulta con cabello canoso, estilo documental, luz natural" value={characterStyle} onChange={function(e){setCharacterStyle(e.target.value);}}/>
+          <div style={{fontSize:11,color:"#7878a0",marginTop:4}}>Si lo completas, todos los prompts Veo3/Runway/Sora de este video van a describir el mismo personaje o estilo para mantener consistencia visual entre escenas.</div>
+        </div>
+      </div>}
+
+      {mode==="own"&&<div className="card">
+        <label className="lbl">Pega tu guion completo</label>
+        <textarea className="inp" style={{minHeight:200,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} placeholder="Pega aqui tu guion ya escrito..." value={ownScript} onChange={function(e){setOwnScript(e.target.value);}}/>
+        <div style={{marginTop:14}}>
+          <label className="lbl">Audio propio (opcional)</label>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <label className="btn bs" style={{cursor:"pointer"}}>
+              🎵 Subir audio
+              <input type="file" accept="audio/*" style={{display:"none"}} onChange={handleAudioUpload}/>
+            </label>
+            {ownAudioName&&<span style={{fontSize:12,color:"#7878a0"}}>{ownAudioName}</span>}
+          </div>
+          {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
+        </div>
+        <button className="btn bp" onClick={useOwnScript} disabled={loading||!ownScript.trim()} style={{marginTop:16}}>{loading?"⏳":"📋 Organizar en escenas"}</button>
+      </div>}
+
       {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>Generando estructura completa...</span></div>}
+      {loading&&<div className="loader"><div className="spin"/><span>{loadingStep||"Generando estructura completa..."}</span></div>}
+
       {script&&<div>
+        {restoredFromHistory&&<div className="alert ainf" style={{fontSize:12,marginBottom:10}}>🕒 Este es tu ultimo video generado, restaurado automaticamente. <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={function(){setHistory(loadLongformHistory());setShowHistory(true);}}>Ver historial completo</span></div>}
         <div className="card" style={{borderColor:"#6c3fff"}}>
           <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>{script.titulo}</div>
           <div style={{fontSize:13,color:"#7878a0",lineHeight:1.6,marginBottom:12}}>{script.descripcion}</div>
           <div className="kwr">{script.palabras_clave&&script.palabras_clave.map(function(kw){return <span key={kw} className="tag ta">{kw}</span>;})}</div>
           <div style={{marginTop:12,display:"flex",gap:10}}><span className="tag tg">⏱ {script.duracion_total}</span><span className="tag tok">{script.escenas?script.escenas.length:0} bloques</span></div>
+          {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
         </div>
+
+        <div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span className="lbl">Guion completo</span>
+            <button className="btn bs" style={{fontSize:12,padding:"4px 10px"}} onClick={function(){const full=script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):"";navigator.clipboard.writeText(full);}}>📋 Copiar todo</button>
+          </div>
+          <div className="stxt" style={{marginTop:8,whiteSpace:"pre-wrap"}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
+          <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:12}} onClick={downloadAllZip} disabled={zipLoading}>{zipLoading?"⏳ Preparando ZIP...":"📦 Descargar todo (audio + clips, por bloque)"}</button>
+        </div>
+
+        {(config.elevenlabsKey||config.geminiKey)?<div className="card">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio</div>
+          {config.elevenlabsKey&&config.geminiKey&&<div style={{marginBottom:12}}>
+            <label className="lbl">Proveedor de voz</label>
+            <select className="inp" value={voiceProvider} onChange={function(e){setVoiceProvider(e.target.value);}}>
+              <option value="eleven">ElevenLabs</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </div>}
+          {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
+          <div className="frow">
+            <div className="fi" style={{flex:2}}>
+              <label className="lbl">Voz</label>
+              <select className="inp" value={voiceId} onChange={function(e){setVoiceId(e.target.value);}}>
+                {voices.map(function(v){
+                  const lang2=v.labels&&(v.labels.language||v.labels.accent);
+                  const extra=lang2?(" — "+lang2):(v.desc?(" — "+v.desc):"");
+                  const label=v.name+extra;
+                  return <option key={v.voice_id} value={v.voice_id}>{label}</option>;
+                })}
+              </select>
+            </div>
+            <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
+          </div>
+          {voiceProvider==="gemini"&&voiceId&&<div style={{marginTop:8}}>
+            <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={previewVoice} disabled={previewLoading}>{previewLoading?"Generando...":"🔊 Probar esta voz"}</button>
+            {previewError&&<div style={{fontSize:12,color:"#e05252",marginTop:6}}>⚠️ {previewError}</div>}
+          </div>}
+        </div>:null}
+
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={function(){setOpen(open===e.numero?null:e.numero);}}>
@@ -1231,24 +1618,63 @@ function LongFormPage(props){
             </div>
             {open===e.numero&&<div>
               <div style={{marginTop:12}}><span className="lbl">Guion</span><div className="stxt">{e.guion}</div><div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><CopyBtn text={e.guion}/></div></div>
+
+              {(config.elevenlabsKey||config.geminiKey)&&voiceId&&<div style={{marginBottom:14}}>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){generateAudioForScene(e);}} disabled={genAudioLoading[e.numero]}>{genAudioLoading[e.numero]?"Generando audio...":"🎙️ Generar audio de esta escena"}</button>
+                {genAudio[e.numero]&&<audio controls src={genAudio[e.numero]} style={{width:"100%",marginTop:8}}/>}
+              </div>}
+
               <span className="lbl">Prompt Veo3 / Runway / Sora</span>
               <div className="pbox">{e.prompt_video}</div>
-              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><CopyBtn text={e.prompt_video}/></div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.prompt_video}/></div>
+
+              <div style={{display:"flex",gap:8,marginBottom:12}}>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px",background:(videoSource[e.numero]||"stock")==="stock"?"#6c3fff":"transparent",color:(videoSource[e.numero]||"stock")==="stock"?"#fff":"#a0a0c0"}} onClick={function(){setVideoSource(function(p){const np=Object.assign({},p);np[e.numero]="stock";return np;});}}>🎞️ Stock</button>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px",background:videoSource[e.numero]==="ai"?"#6c3fff":"transparent",color:videoSource[e.numero]==="ai"?"#fff":"#a0a0c0"}} onClick={function(){setVideoSource(function(p){const np=Object.assign({},p);np[e.numero]="ai";return np;});}}>✨ IA generativa</button>
+              </div>
+
+              {(videoSource[e.numero]||"stock")==="stock"&&<div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
-                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Buscar clips"}</button>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
               </div>
+              {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automaticamente...</div>}
+              <div style={{fontSize:11,color:"#7878a0",marginBottom:8}}>Esta escena dura varios minutos: el stock sirve como referencia visual, vas a necesitar varios clips distintos al armar el video final en tu editor.</div>
               {clips[e.numero]&&<div className="cgrid">
-                {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/><span className="csrc">Pexels</span></div>;})}
-                {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v){return <div key={v.id} className="ci"><video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/><span className="csrc">Pixabay</span></div>;})}
+                {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v,idx){
+                  const order=getSelectedOrder(e.numero,"px",idx);
+                  const used=order>0;
+                  return <div key={v.id} className="ci" style={{border:used?"2px solid #22c55e":"2px solid transparent"}}>
+                    <video src={v.video_files&&v.video_files[0]?v.video_files[0].link:""} muted loop controls/>
+                    <span className="csrc">Pexels {v.duration?"· "+v.duration+"s":""}</span>
+                    <button onClick={function(){toggleClip(e.numero,"px",idx);}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:11,fontWeight:700,width:26,height:26,borderRadius:13,border:"none",cursor:"pointer"}}>{order>0?order:"+"}</button>
+                  </div>;
+                })}
+                {clips[e.numero].pb&&clips[e.numero].pb.slice(0,3).map(function(v,idx){
+                  const order=getSelectedOrder(e.numero,"pb",idx);
+                  const used=order>0;
+                  return <div key={v.id} className="ci" style={{border:used?"2px solid #22c55e":"2px solid transparent"}}>
+                    <video src={v.videos&&v.videos.small?v.videos.small.url:""} muted loop controls/>
+                    <span className="csrc">Pixabay {v.duration?"· "+v.duration+"s":""}</span>
+                    <button onClick={function(){toggleClip(e.numero,"pb",idx);}} style={{position:"absolute",top:4,left:4,background:used?"#22c55e":"rgba(0,0,0,0.75)",color:used?"#0a0a0f":"white",fontSize:11,fontWeight:700,width:26,height:26,borderRadius:13,border:"none",cursor:"pointer"}}>{order>0?order:"+"}</button>
+                  </div>;
+                })}
+              </div>}
+              </div>}
+              {videoSource[e.numero]==="ai"&&<div>
+                <label className="btn bs" style={{cursor:"pointer",fontSize:12,display:"inline-flex"}}>
+                  📤 Subir clip generado
+                  <input type="file" accept="video/*" style={{display:"none"}} onChange={function(evt){handleCustomClipUpload(evt,e.numero);}}/>
+                </label>
+                {customClip[e.numero]?<div style={{marginTop:10}}>
+                  <video src={customClip[e.numero].url} controls style={{width:"100%",borderRadius:8}}/>
+                  <div style={{fontSize:11,color:"#22c55e",marginTop:4}}>✓ {customClip[e.numero].name}</div>
+                </div>:<div style={{fontSize:12,color:"#7878a0",marginTop:8,lineHeight:1.6}}>Genera el clip pegando el prompt de arriba en Flow, Leonardo u otra IA de video, descargalo, y subilo aca.</div>}
               </div>}
             </div>}
+            <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:14,fontSize:12}} onClick={function(){downloadSceneZip(e);}} disabled={zipLoading}>{zipLoading?"⏳ Preparando...":"📦 Descargar este bloque (audio + clips)"}</button>
           </div>;
         })}
-        <div className="card">
-          <span className="lbl">Guion completo</span>
-          <div className="stxt" style={{marginTop:8}}>{script.escenas?script.escenas.map(function(e){return "["+e.tipo+" — "+e.titulo_bloque+"]\n"+e.guion;}).join("\n\n─────────────────────\n\n"):""}</div>
-        </div>
       </div>}
     </div>
   );
