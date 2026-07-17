@@ -209,8 +209,8 @@ async function callClaude(prompt, config) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey: config.anthropicKey, messages: [{ role: "user", content: prompt }] }),
   });
-  if (!res.ok) throw new Error("Error con la API de Anthropic.");
   const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Error con la API de Anthropic.");
   return data.content?.[0]?.text || "";
 }
 async function getElevenLabsVoices(config) {
@@ -931,7 +931,7 @@ function ShortsPage(props){
       saveToShortsHistory(finalScript);
       setHistory(loadShortsHistory());
       autoFetchAllClips(finalScript);
-    }catch(e){setError("Error generando. Verifica tu Anthropic API key y saldo.");}
+    }catch(e){setError(e.message||"Error generando. Verifica tu Anthropic API key y saldo.");}
     setLoading(false);setLoadingStep("");
   };
 
@@ -948,7 +948,7 @@ function ShortsPage(props){
       saveToShortsHistory(finalScript);
       setHistory(loadShortsHistory());
       autoFetchAllClips(finalScript);
-    }catch(e){setError("Error procesando tu guion. Verifica tu Anthropic API key.");}
+    }catch(e){setError(e.message||"Error procesando tu guion. Verifica tu Anthropic API key.");}
     setLoading(false);setLoadingStep("");
   };
 
@@ -1549,7 +1549,7 @@ function LongFormPage(props){
       saveToLongformHistory(finalScript);
       setHistory(loadLongformHistory());
       autoFetchAllClips(finalScript);
-    }catch(e){setError("Error generando. Verifica tu Anthropic API key.");}
+    }catch(e){setError(e.message||"Error generando. Verifica tu Anthropic API key.");}
     setLoading(false);
   };
 
@@ -1566,7 +1566,7 @@ function LongFormPage(props){
       saveToLongformHistory(finalScript);
       setHistory(loadLongformHistory());
       autoFetchAllClips(finalScript);
-    }catch(e){setError("Error organizando el guion. Verifica tu Anthropic API key.");}
+    }catch(e){setError(e.message||"Error organizando el guion. Verifica tu Anthropic API key.");}
     setLoading(false);
   };
 
