@@ -132,6 +132,14 @@ function sugerirRitmo(guion) {
   const impacto=avg<9||hasNumbers||enfasisCount>=2;
   return impacto?{tipo:"Impacto",rango:"1.5–2.5s por clip",icon:"⚡"}:{tipo:"Reflexivo",rango:"4–6s por clip",icon:"🌊"};
 }
+function parseAIJson(text) {
+  const clean = (text || "").replace(/```json|```/g, "").trim();
+  try {
+    return JSON.parse(clean);
+  } catch (err) {
+    throw new Error("La respuesta de la IA llego incompleta o no es JSON valido. Prueba de nuevo, o si persiste, reduce la duracion/cantidad de escenas.");
+  }
+}
 function getBusquedaTerm(e, kind) {
   if (!e || !e.busqueda_clip) return "";
   if (typeof e.busqueda_clip === "string") return e.busqueda_clip;
@@ -733,8 +741,7 @@ function AnalyzerPage(props){
       const desc=(v.snippet&&v.snippet.description)?v.snippet.description.slice(0,400):"";
       const prompt="Analiza este video viral y genera 3 ideas adaptadas.\nVIDEO: "+JSON.stringify(v.snippet?v.snippet.title:"")+"\nDESCRIPCION: "+desc+"\n\nResponde SOLO en JSON valido:\n{\"estructura\":{\"hook\":\"texto\",\"desarrollo\":\"texto\",\"cierre\":\"texto\"},\"ideas\":[{\"titulo\":\"texto\",\"hook\":\"texto\",\"estructura\":\"texto\",\"miniatura\":\"texto\",\"palabrasClave\":[\"kw1\",\"kw2\"]}]}\n\n3 ideas en "+langLabel+", estilo "+styleLabel+", canal faceless. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
-      const clean=text.replace(/```json|```/g,"").trim();
-      const parsed=JSON.parse(clean);
+            const parsed=parseAIJson(text);
       setResult({video:v,parsed:parsed,views:formatNumber(parseInt((v.statistics&&v.statistics.viewCount)||0)),dur:formatDuration(parseDuration(v.contentDetails?v.contentDetails.duration:null))});
     }catch(e){setError(e.message);}
     setLoading(false);
@@ -921,8 +928,7 @@ function ShortsPage(props){
       const charLine=characterStyle.trim()?("\\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
       const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico, ej 'person writing notebook slow motion office desk'), 'metaforica' (una imagen simbolica que represente la idea sin mostrarla literalmente, ej para 'decision dificil' usar 'crossroads path fog slow motion'), y 'textura' (un plano de ambiente/textura abstracta que sirva de conector visual, ej 'water ripples close up slow motion'). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre las 3 escenas del short (evita saltos bruscos de tono, por ejemplo de calido a frio sin razon), como si fueran parte del mismo cortometraje."+varLine+"\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nSolo JSON sin markdown.";
       const text=await callClaude(p4,config);
-      const clean=text.replace(/```json|```/g,"").trim();
-      const finalScript=JSON.parse(clean);
+            const finalScript=parseAIJson(text);
       setScript(finalScript);
       const openingNew=finalScript.escenas&&finalScript.escenas[0]?finalScript.escenas[0].guion:"";
       let maxSim=0;
@@ -942,8 +948,7 @@ function ShortsPage(props){
     try{
       const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
-      const clean=text.replace(/```json|```/g,"").trim();
-      const finalScript=JSON.parse(clean);
+            const finalScript=parseAIJson(text);
       setScript(finalScript);
       saveToShortsHistory(finalScript);
       setHistory(loadShortsHistory());
@@ -1538,8 +1543,7 @@ function LongFormPage(props){
       const varLine=recentHooks.length?("\nIMPORTANTE - VARIACION: tus ultimos videos de este canal empezaron asi (NO repitas la misma estructura de apertura, palabras ni angulo): "+recentHooks.map(function(t){return JSON.stringify(t.slice(0,140));}).join(" | ")+". El gancho de este nuevo video debe sentirse claramente distinto."):"";
       const prompt="Sos un guionista experto de YouTube especializado en retencion. Crea la estructura y el guion completo de un video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless (voz en off, sin rostro en camara).\n\nREGLAS DE ESCRITURA QUE DEBES APLICAR SIEMPRE:\n1. Gancho (primera escena, tipo INTRO): debe ser la linea mas poderosa del video. Genera una promesa clara o abre un bucle que el espectador necesite cerrar. Nada de frases gastadas como 'no vas a creer lo que va a pasar'.\n2. La danza (contexto y conflicto): nunca encadenes ideas con 'y... y... y...'. Usa conectores de tension: 'pero' para introducir conflicto, 'por lo tanto' para mostrar consecuencia, 'sin embargo' para generar un giro. Cada escena debe abrir un bucle nuevo antes de cerrar el anterior.\n3. Reenganche a mitad: en la escena central del desarrollo, introduce un giro, un dato inesperado o una pregunta abierta que reactive la curiosidad. No dependas solo del gancho inicial para sostener la atencion.\n4. Ritmo: varia deliberadamente la longitud de las oraciones, no todas cortas ni todas largas. Marca pausas dramaticas con [pausa] donde corresponda dentro del texto de 'guion'.\n5. Enfasis: marca con [enfasis] las palabras o frases clave donde la voz deberia subir el tono o bajar la velocidad.\n6. Personalidad: el guion debe tener un punto de vista unico. Prohibido el formato generico tipo 'X tips para Y' o 'X formas de'. Encuentra un angulo propio o una metafora central que lo diferencie.\n7. Cierre (ultima escena, tipo CIERRE): el punto mas impactante del video va al final, no enterrado en el medio. Construye hacia ese momento desde el inicio y conecta con el gancho, dejando una idea que se quede en la cabeza del espectador.\n\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre escenas consecutivas a lo largo de todo el video, como si fueran parte del mismo cortometraje, evitando saltos bruscos de tono."+varLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras, con marcadores [pausa] y [enfasis] donde corresponda\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
-      const clean=text.replace(/```json|```/g,"").trim();
-      const finalScript=JSON.parse(clean);
+            const finalScript=parseAIJson(text);
       setScript(finalScript);
       const openingNew=finalScript.escenas&&finalScript.escenas[0]?finalScript.escenas[0].guion:"";
       let maxSim=0;
@@ -1559,8 +1563,7 @@ function LongFormPage(props){
     try{
       const prompt="Toma este guion de video largo escrito por el usuario y dividelo en escenas (INTRO, DESARROLLO, CIERRE) sin modificar el texto original, solo organizandolo en bloques logicos segun los cambios de tema o parrafo. Para cada escena inventa un titulo_bloque corto. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra tipo de plano, sujeto y apariencia, entorno, mood, accion, iluminacion y estilo visual, sin corchetes, listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"descripcion\":\"resumen breve\",\"duracion_total\":\"estimado\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para este bloque\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en tantas escenas como haga falta segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
-      const clean=text.replace(/```json|```/g,"").trim();
-      const finalScript=JSON.parse(clean);
+            const finalScript=parseAIJson(text);
       setScript(finalScript);
       setOpen(1);
       saveToLongformHistory(finalScript);
