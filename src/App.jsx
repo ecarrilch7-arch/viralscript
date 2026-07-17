@@ -7,6 +7,8 @@ async function buildZip(entries, zipName) {
     try {
       if (en.text !== undefined) {
         zip.file(en.path, en.text);
+      } else if (en.blob !== undefined) {
+        zip.file(en.path, en.blob);
       } else {
         const res = await fetch(en.url);
         const blob = await res.blob();
@@ -23,6 +25,117 @@ async function buildZip(entries, zipName) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+function stripVoiceMarkers(text) {
+  if (!text) return text;
+  return text.replace(/\[pausa\]/gi," ").replace(/\[enfasis\]/gi,"").replace(/\[énfasis\]/gi,"").replace(/\s{2,}/g," ").trim();
+}
+async function concatAudioToWav(urls) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  const buffers = [];
+  for (const u of urls) {
+    try {
+      const res = await fetch(u);
+      const arr = await res.arrayBuffer();
+      const buf = await ctx.decodeAudioData(arr.slice(0));
+      buffers.push(buf);
+    } catch (err) {}
+  }
+  if (buffers.length === 0) { ctx.close(); return null; }
+  const sampleRate = buffers[0].sampleRate;
+  const numChannels = buffers[0].numberOfChannels;
+  let totalLength = 0;
+  for (const b of buffers) { totalLength += b.length; }
+  const out = ctx.createBuffer(numChannels, totalLength, sampleRate);
+  let offset = 0;
+  for (const b of buffers) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const outData = out.getChannelData(ch);
+      const srcCh = ch < b.numberOfChannels ? ch : 0;
+      outData.set(b.getChannelData(srcCh), offset);
+    }
+    offset += b.length;
+  }
+  ctx.close();
+  return audioBufferToWavBlob(out);
+}
+function audioBufferToWavBlob(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const numFrames = buffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = numFrames * blockAlign;
+  const arrBuffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(arrBuffer);
+  function writeString(offset, str) {
+    for (let i = 0; i < str.length; i++) { view.setUint8(offset + i, str.charCodeAt(i)); }
+  }
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  const channelData = [];
+  for (let ch = 0; ch < numChannels; ch++) { channelData.push(buffer.getChannelData(ch)); }
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      let sample = channelData[ch][i];
+      sample = Math.max(-1, Math.min(1, sample));
+      sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, sample, true);
+      offset += 2;
+    }
+  }
+  return new Blob([arrBuffer], { type: "audio/wav" });
+}
+const STOPWORDS_ES=["que","para","esto","pero","con","los","las","del","una","por","como","esta","este","son","hay","muy","mas","sin","tus","tu","yo","tan","fue","ser","han","hace","cada","entre","donde","cuando","desde","sobre","todo","toda","todos","todas","asi","eso","esa","ese","les","nos","the","and","for","you"];
+function normalizeWords(text) {
+  if (!text) return [];
+  const clean = text.toLowerCase().replace(/\[pausa\]/g," ").replace(/\[enfasis\]/g," ").replace(/[^a-zA-ZáéíóúñÁÉÍÓÚÑ\s]/g," ");
+  const words = clean.split(/\s+/).filter(function(w){return w.length>3 && STOPWORDS_ES.indexOf(w)===-1;});
+  return words;
+}
+function textSimilarity(a, b) {
+  const wa=normalizeWords(a);
+  const wb=normalizeWords(b);
+  if (wa.length===0 || wb.length===0) return 0;
+  const setA={};
+  wa.forEach(function(w){setA[w]=true;});
+  const setB={};
+  wb.forEach(function(w){setB[w]=true;});
+  let inter=0;
+  for (const w in setA) { if (setB[w]) inter++; }
+  const union=Object.keys(Object.assign({},setA,setB)).length;
+  return union===0?0:inter/union;
+}
+function sugerirRitmo(guion) {
+  if (!guion) return null;
+  const clean = guion.replace(/\[pausa\]/gi,"").replace(/\[enfasis\]/gi,"");
+  const sentences = clean.split(/[.!?]+/).map(function(s){return s.trim();}).filter(function(s){return s.length>0;});
+  if (sentences.length===0) return null;
+  let totalWords=0;
+  sentences.forEach(function(s){totalWords+=s.split(/\s+/).filter(function(w){return w.length>0;}).length;});
+  const avg=totalWords/sentences.length;
+  const hasNumbers=/\d/.test(clean);
+  const enfasisCount=(guion.match(/\[enfasis\]/gi)||[]).length;
+  const impacto=avg<9||hasNumbers||enfasisCount>=2;
+  return impacto?{tipo:"Impacto",rango:"1.5–2.5s por clip",icon:"⚡"}:{tipo:"Reflexivo",rango:"4–6s por clip",icon:"🌊"};
+}
+function getBusquedaTerm(e, kind) {
+  if (!e || !e.busqueda_clip) return "";
+  if (typeof e.busqueda_clip === "string") return e.busqueda_clip;
+  return e.busqueda_clip[kind] || e.busqueda_clip.literal || e.busqueda_clip.metaforica || e.busqueda_clip.textura || "";
 }
 function padNum(n) { return n < 10 ? "0" + n : "" + n; }
 function extFromUrl(url) {
@@ -714,6 +827,10 @@ function ShortsPage(props){
   const [loadVoices,setLoadVoices]=useState(false);
   const [voiceError,setVoiceError]=useState("");
   const [genAudio,setGenAudio]=useState({});
+  const [termKind,setTermKind]=useState({});
+  const [discloseAI,setDiscloseAI]=useState(true);
+  const [structWarning,setStructWarning]=useState("");
+  const [paletteNote,setPaletteNote]=useState("");
   const [genAudioLoading,setGenAudioLoading]=useState({});
   const [selectedClip,setSelectedClip]=useState({});
   const [videoSource,setVideoSource]=useState({});
@@ -760,7 +877,7 @@ function ShortsPage(props){
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(e.guion,voiceId,config):await generateSpeech(e.guion,voiceId,config);
+      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(cleanGuion,voiceId,config):await generateSpeech(cleanGuion,voiceId,config);
       setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
     }catch(err){setError(err.message);}
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -775,12 +892,14 @@ function ShortsPage(props){
 
   const generate=async function(){
     if(!topic.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);setStructWarning("");
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
       const sObj=STYLES.find(function(s){return s.code===style;});
       const sL=sObj?sObj.label:"reflexivo";
+      const recentHooks=history.slice(0,3).map(function(h){return h.script&&h.script.escenas&&h.script.escenas[0]?h.script.escenas[0].guion:"";}).filter(function(t){return t;});
+      const varLine=recentHooks.length?("\nIMPORTANTE - VARIACION: tus ultimos guiones de este canal empezaron asi (NO repitas la misma estructura de apertura, palabras ni angulo): "+recentHooks.map(function(t){return JSON.stringify(t.slice(0,140));}).join(" | ")+". El gancho de este nuevo guion debe sentirse claramente distinto."):"";
 
       setLoadingStep("Paso 1/4 — Generando ideas con gancho...");
       const p1="Genera 3 ideas de YouTube Short sobre "+JSON.stringify(topic)+" en "+lL+", estilo "+sL+". No quiero ideas genericas ni titulos tipo 'como mejorar en'. Cada idea debe basarse en un problema real y especifico que alguien ya esta viviendo, algo que genere identificacion inmediata tipo 'esto me pasa'. Responde SOLO JSON: {\"ideas\":[\"idea1\",\"idea2\",\"idea3\"]}. Sin markdown.";
@@ -800,11 +919,15 @@ function ShortsPage(props){
 
       setLoadingStep("Paso 4/4 — Desarrollando guion completo y cierre...");
       const charLine=characterStyle.trim()?("\\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
-      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip usa una descripcion especifica en ingles de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nSolo JSON sin markdown.";
+      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico, ej 'person writing notebook slow motion office desk'), 'metaforica' (una imagen simbolica que represente la idea sin mostrarla literalmente, ej para 'decision dificil' usar 'crossroads path fog slow motion'), y 'textura' (un plano de ambiente/textura abstracta que sirva de conector visual, ej 'water ripples close up slow motion'). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre las 3 escenas del short (evita saltos bruscos de tono, por ejemplo de calido a frio sin razon), como si fueran parte del mismo cortometraje."+varLine+"\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nSolo JSON sin markdown.";
       const text=await callClaude(p4,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
       setScript(finalScript);
+      const openingNew=finalScript.escenas&&finalScript.escenas[0]?finalScript.escenas[0].guion:"";
+      let maxSim=0;
+      recentHooks.forEach(function(t){const s=textSimilarity(openingNew,t);if(s>maxSim)maxSim=s;});
+      setStructWarning(maxSim>0.45?("⚠️ El gancho de este guion se parece bastante a uno de tus ultimos videos ("+Math.round(maxSim*100)+"% de palabras clave en comun). Considera regenerar para un angulo mas distinto."):"");
       saveToShortsHistory(finalScript);
       setHistory(loadShortsHistory());
       autoFetchAllClips(finalScript);
@@ -817,7 +940,7 @@ function ShortsPage(props){
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
     setLoadingStep("Analizando tu guion y dividiendo en escenas...");
     try{
-      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Genera tambien una keyword de busqueda de stock footage en ingles con descripcion especifica de accion + contexto + movimiento (ejemplo: 'person writing notebook slow motion office desk', no solo 'writing'), para que varios clips de la misma busqueda sean visualmente coherentes entre si.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
+      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
@@ -840,10 +963,13 @@ function ShortsPage(props){
     if(script)autoFetchAllClips(script);
   },[]);
 
-  const fetchClips=async function(e){
+  const fetchClips=async function(e,termKindArg){
+    const tk=termKindArg||termKind[e.numero]||"literal";
+    const q=getBusquedaTerm(e,tk);
+    setTermKind(function(p){const np=Object.assign({},p);np[e.numero]=tk;return np;});
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const results=await Promise.all([searchPexels(e.busqueda_clip,config),config.pixabayKey?searchPixabay(e.busqueda_clip,config):Promise.resolve([])]);
+      const results=await Promise.all([searchPexels(q,config),config.pixabayKey?searchPixabay(q,config):Promise.resolve([])]);
       setClips(function(p){const np=Object.assign({},p);np[e.numero]={px:results[0],pb:results[1]};return np;});
     }catch(err){}
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -913,6 +1039,17 @@ function ShortsPage(props){
     return total;
   };
 
+  const getFirstClipPoster=function(numero){
+    const cl=clips[numero];
+    if(!cl)return null;
+    const list=selectedClip[numero];
+    let src="px",idx=0;
+    if(list&&list.length){src=list[0].src;idx=list[0].idx;}
+    const v=src==="px"?(cl.px&&cl.px[idx]):(cl.pb&&cl.pb[idx]);
+    if(!v)return null;
+    if(src==="px")return v.image||null;
+    return v.picture_id?("https://i.vimeocdn.com/video/"+v.picture_id+"_295x166.jpg"):null;
+  };
   const pickClipUrls=function(numero){
     if(customClip[numero])return [customClip[numero].url];
     const list=selectedClip[numero];
@@ -950,13 +1087,21 @@ function ShortsPage(props){
     setZipLoading(true);
     try{
       const entries=[];
+      if(discloseAI)entries.push({text:"RECORDATORIO DE DIVULGACION - YouTube\n\nEste video fue producido con voz generada por IA. Antes de publicar:\n1. En YouTube Studio, ve a Detalles del video - Mas opciones.\n2. Activa el interruptor Contenido alterado o sintetico.\n3. Marca la opcion correspondiente a voz o audio generado por IA.\n\nEsto no afecta la monetizacion ni el alcance del video, pero evita strikes de la plataforma por incumplimiento de politicas de divulgacion (Inauthentic Content Policy, 2026)."+(paletteNote?("\n\nPaleta / tono visual definido para este video: "+paletteNote):""),path:"recordatorio_divulgacion.txt"});
+      const audioUrlsOrdenados=[];
       for(const e of script.escenas){
         const folder="escena_"+padNum(e.numero)+"_"+e.tipo+"/";
         entries.push({text:e.guion,path:folder+"guion.txt"});
         const audioUrl=genAudio[e.numero];
-        if(audioUrl)entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});
+        if(audioUrl){entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});audioUrlsOrdenados.push(audioUrl);}
         const clipUrls=pickClipUrls(e.numero);
         clipUrls.forEach(function(u,i){entries.push({url:u,path:folder+"clip_"+(i+1)+"."+extFromUrl(u)});});
+      }
+      if(ownAudioUrl){
+        entries.push({url:ownAudioUrl,path:"audio_completo."+extFromUrl(ownAudioUrl)});
+      }else if(audioUrlsOrdenados.length>0){
+        const wavBlob=await concatAudioToWav(audioUrlsOrdenados);
+        if(wavBlob)entries.push({blob:wavBlob,path:"audio_completo.wav"});
       }
       await buildZip(entries,(script.titulo||"short")+".zip");
     }catch(err){}
@@ -1061,6 +1206,13 @@ function ShortsPage(props){
           <div style={{fontSize:17,fontWeight:700}}>{script.titulo}</div>
           <div style={{fontSize:12,color:"#7878a0",marginTop:4}}>⏱ {script.duracion_total}</div>
           {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
+          <input className="inp" style={{marginTop:10,fontSize:12}} placeholder="🎨 Paleta / tono visual del video (ej: cálido, desaturado, luz natural) — checklist de referencia al elegir clips" value={paletteNote} onChange={function(ev){setPaletteNote(ev.target.value);}}/>
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:10,fontSize:12,color:"#a0a0c0",cursor:"pointer"}}>
+            <input type="checkbox" checked={discloseAI} onChange={function(ev){setDiscloseAI(ev.target.checked);}}/>
+            🏷️ Marcar como contenido alterado/sintetico en YouTube Studio antes de publicar
+          </label>
+          {discloseAI&&<div className="alert ainf" style={{fontSize:11,marginTop:8}}>Recordatorio: en YouTube Studio → Detalles del video → Mas opciones, activa "Contenido alterado o sintetico" (voz generada por IA). Esto no afecta la monetizacion ni el alcance, pero evita strikes por incumplimiento de divulgacion.</div>}
+          {structWarning&&<div className="alert aerr" style={{fontSize:11,marginTop:8}}>{structWarning}</div>}
         </div>
 
         <div className="card">
@@ -1113,11 +1265,25 @@ function ShortsPage(props){
           </div>}
         </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
 
+        {script.escenas&&script.escenas.some(function(e){return getFirstClipPoster(e.numero);})&&<div style={{marginBottom:14}}>
+          <span className="lbl">🎞️ Storyboard — coherencia visual entre escenas</span>
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6}}>
+            {script.escenas.map(function(e){
+              const poster=getFirstClipPoster(e.numero);
+              return <div key={e.numero} style={{flex:"0 0 auto",width:70}}>
+                <div style={{width:70,height:100,borderRadius:8,background:poster?("#000 url("+JSON.stringify(poster).slice(1,-1)+") center/cover"):"#ffffff10",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#7878a0",overflow:"hidden"}}>{!poster&&"sin clip"}</div>
+                <div style={{fontSize:9,color:"#7878a0",textAlign:"center",marginTop:2}}>#{e.numero} {e.tipo}</div>
+              </div>;
+            })}
+          </div>
+        </div>}
+
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div className="sh">
               <div className="sn" style={{background:sc[e.tipo]||"#6c3fff"}}>{e.numero}</div>
               <div><div style={{fontSize:11,fontWeight:700,color:sc[e.tipo]||"#6c3fff",textTransform:"uppercase"}}>{e.tipo}</div><div style={{fontSize:11,color:"#7878a0"}}>{e.duracion}</div></div>
+              {(function(){const r=sugerirRitmo(e.guion);return r?<span style={{fontSize:10,padding:"3px 8px",borderRadius:10,background:"#ffffff10",color:"#a0a0c0",whiteSpace:"nowrap"}}>{r.icon} {r.tipo} · {r.rango}</span>:null;})()}
             </div>
             <span className="lbl">Guion</span>
             <div className="stxt">{e.guion}</div>
@@ -1134,9 +1300,16 @@ function ShortsPage(props){
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px",background:videoSource[e.numero]==="ai"?"#6c3fff":"transparent",color:videoSource[e.numero]==="ai"?"#fff":"#a0a0c0"}} onClick={function(){setVideoSource(function(p){const np=Object.assign({},p);np[e.numero]="ai";return np;});}}>✨ IA generativa</button>
             </div>
             {(videoSource[e.numero]||"stock")==="stock"&&<div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
-              <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
+            <div style={{marginBottom:8}}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
+                <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:(termKind[e.numero]||"literal")==="literal"?"#6c3fff":"transparent",color:(termKind[e.numero]||"literal")==="literal"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"literal");}}>🔎 Literal</button>
+                <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:termKind[e.numero]==="metaforica"?"#6c3fff":"transparent",color:termKind[e.numero]==="metaforica"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"metaforica");}}>🎭 Metafórico</button>
+                <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:termKind[e.numero]==="textura"?"#6c3fff":"transparent",color:termKind[e.numero]==="textura"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"textura");}}>🌫️ Textura</button>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span className="lbl" style={{marginBottom:0,fontSize:11}}>{getBusquedaTerm(e,termKind[e.numero]||"literal")}</span>
+                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
+              </div>
             </div>
             {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automáticamente...</div>}
             {clips[e.numero]&&(function(){
@@ -1267,6 +1440,11 @@ function LongFormPage(props){
   const [clips,setClips]=useState({});
   const [loadClips,setLoadClips]=useState({});
   const [selectedClip,setSelectedClip]=useState({});
+  const [assembling,setAssembling]=useState(false);
+  const [assembleProgress,setAssembleProgress]=useState("");
+  const [assembledUrl,setAssembledUrl]=useState("");
+  const [assembleError,setAssembleError]=useState("");
+  const [showAssembleWarning,setShowAssembleWarning]=useState(false);
   const [videoSource,setVideoSource]=useState({});
   const [customClip,setCustomClip]=useState({});
   const [open,setOpen]=useState(1);
@@ -1279,6 +1457,10 @@ function LongFormPage(props){
   const [previewLoading,setPreviewLoading]=useState(false);
   const [previewError,setPreviewError]=useState("");
   const [genAudio,setGenAudio]=useState({});
+  const [termKind,setTermKind]=useState({});
+  const [discloseAI,setDiscloseAI]=useState(true);
+  const [structWarning,setStructWarning]=useState("");
+  const [paletteNote,setPaletteNote]=useState("");
   const [genAudioLoading,setGenAudioLoading]=useState({});
 
   useEffect(function(){
@@ -1328,7 +1510,7 @@ function LongFormPage(props){
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(e.guion,voiceId,config):await generateSpeech(e.guion,voiceId,config);
+      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(cleanGuion,voiceId,config):await generateSpeech(cleanGuion,voiceId,config);
       setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
     }catch(err){setError(err.message);}
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -1343,7 +1525,7 @@ function LongFormPage(props){
 
   const generate=async function(){
     if(!topic.trim())return;
-    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
+    setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);setStructWarning("");
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
@@ -1352,11 +1534,17 @@ function LongFormPage(props){
       const durNum=parseInt(duration);
       const n=durNum>=60?8:durNum>=45?6:durNum>=30?5:durNum>=20?4:durNum>=15?3:2;
       const charLine=characterStyle.trim()?("\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
-      const prompt="Crea estructura de video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":\"keyword ingles\"}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
+      const recentHooks=history.slice(0,3).map(function(h){return h.script&&h.script.escenas&&h.script.escenas[0]?h.script.escenas[0].guion:"";}).filter(function(t){return t;});
+      const varLine=recentHooks.length?("\nIMPORTANTE - VARIACION: tus ultimos videos de este canal empezaron asi (NO repitas la misma estructura de apertura, palabras ni angulo): "+recentHooks.map(function(t){return JSON.stringify(t.slice(0,140));}).join(" | ")+". El gancho de este nuevo video debe sentirse claramente distinto."):"";
+      const prompt="Sos un guionista experto de YouTube especializado en retencion. Crea la estructura y el guion completo de un video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless (voz en off, sin rostro en camara).\n\nREGLAS DE ESCRITURA QUE DEBES APLICAR SIEMPRE:\n1. Gancho (primera escena, tipo INTRO): debe ser la linea mas poderosa del video. Genera una promesa clara o abre un bucle que el espectador necesite cerrar. Nada de frases gastadas como 'no vas a creer lo que va a pasar'.\n2. La danza (contexto y conflicto): nunca encadenes ideas con 'y... y... y...'. Usa conectores de tension: 'pero' para introducir conflicto, 'por lo tanto' para mostrar consecuencia, 'sin embargo' para generar un giro. Cada escena debe abrir un bucle nuevo antes de cerrar el anterior.\n3. Reenganche a mitad: en la escena central del desarrollo, introduce un giro, un dato inesperado o una pregunta abierta que reactive la curiosidad. No dependas solo del gancho inicial para sostener la atencion.\n4. Ritmo: varia deliberadamente la longitud de las oraciones, no todas cortas ni todas largas. Marca pausas dramaticas con [pausa] donde corresponda dentro del texto de 'guion'.\n5. Enfasis: marca con [enfasis] las palabras o frases clave donde la voz deberia subir el tono o bajar la velocidad.\n6. Personalidad: el guion debe tener un punto de vista unico. Prohibido el formato generico tipo 'X tips para Y' o 'X formas de'. Encuentra un angulo propio o una metafora central que lo diferencie.\n7. Cierre (ultima escena, tipo CIERRE): el punto mas impactante del video va al final, no enterrado en el medio. Construye hacia ese momento desde el inicio y conecta con el gancho, dejando una idea que se quede en la cabeza del espectador.\n\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre escenas consecutivas a lo largo de todo el video, como si fueran parte del mismo cortometraje, evitando saltos bruscos de tono."+varLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras, con marcadores [pausa] y [enfasis] donde corresponda\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
       setScript(finalScript);
+      const openingNew=finalScript.escenas&&finalScript.escenas[0]?finalScript.escenas[0].guion:"";
+      let maxSim=0;
+      recentHooks.forEach(function(t){const s=textSimilarity(openingNew,t);if(s>maxSim)maxSim=s;});
+      setStructWarning(maxSim>0.45?("⚠️ El gancho de este video se parece bastante a uno de tus ultimos videos ("+Math.round(maxSim*100)+"% de palabras clave en comun). Considera regenerar para un angulo mas distinto."):"");
       setOpen(1);
       saveToLongformHistory(finalScript);
       setHistory(loadLongformHistory());
@@ -1369,7 +1557,7 @@ function LongFormPage(props){
     if(!ownScript.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
     try{
-      const prompt="Toma este guion de video largo escrito por el usuario y dividelo en escenas (INTRO, DESARROLLO, CIERRE) sin modificar el texto original, solo organizandolo en bloques logicos segun los cambios de tema o parrafo. Para cada escena inventa un titulo_bloque corto. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra tipo de plano, sujeto y apariencia, entorno, mood, accion, iluminacion y estilo visual, sin corchetes, listo para pegar en Veo3, Runway o Sora. Genera tambien busqueda_clip con keyword de stock footage en ingles especifica (accion + contexto + movimiento).\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"descripcion\":\"resumen breve\",\"duracion_total\":\"estimado\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para este bloque\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":\"keyword ingles descriptiva\"}]}\nDivide en tantas escenas como haga falta segun el contenido. Solo JSON sin markdown.";
+      const prompt="Toma este guion de video largo escrito por el usuario y dividelo en escenas (INTRO, DESARROLLO, CIERRE) sin modificar el texto original, solo organizandolo en bloques logicos segun los cambios de tema o parrafo. Para cada escena inventa un titulo_bloque corto. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra tipo de plano, sujeto y apariencia, entorno, mood, accion, iluminacion y estilo visual, sin corchetes, listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"descripcion\":\"resumen breve\",\"duracion_total\":\"estimado\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para este bloque\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en tantas escenas como haga falta segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
       const clean=text.replace(/```json|```/g,"").trim();
       const finalScript=JSON.parse(clean);
@@ -1382,10 +1570,13 @@ function LongFormPage(props){
     setLoading(false);
   };
 
-  const fetchClips=async function(e){
+  const fetchClips=async function(e,termKindArg){
+    const tk=termKindArg||termKind[e.numero]||"literal";
+    const q=getBusquedaTerm(e,tk);
+    setTermKind(function(p){const np=Object.assign({},p);np[e.numero]=tk;return np;});
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const results=await Promise.all([searchPexels(e.busqueda_clip,config),config.pixabayKey?searchPixabay(e.busqueda_clip,config):Promise.resolve([])]);
+      const results=await Promise.all([searchPexels(q,config),config.pixabayKey?searchPixabay(q,config):Promise.resolve([])]);
       setClips(function(p){const np=Object.assign({},p);np[e.numero]={px:results[0],pb:results[1]};return np;});
     }catch(err){}
     setLoadClips(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -1411,6 +1602,54 @@ function LongFormPage(props){
     const pos=list.indexOf(key);
     return pos>=0?pos+1:0;
   };
+  const getClipDuration=function(numero,src,idx){
+    const cl=clips[numero];
+    if(!cl)return 0;
+    if(src==="px"&&cl.px&&cl.px[idx])return cl.px[idx].duration||8;
+    if(src==="pb"&&cl.pb&&cl.pb[idx])return cl.pb[idx].duration||8;
+    return 8;
+  };
+  const getSceneNeededSeconds=function(e){
+    const d=e.duracion||"";
+    const m=d.match(/([\d.]+)/g);
+    if(!m)return 20;
+    const nums=m.map(Number);
+    const val=nums.length>1?Math.max.apply(null,nums):nums[0];
+    return /min/i.test(d)?Math.round(val*60):Math.round(val);
+  };
+  const getSelectedSeconds=function(numero){
+    const list=selectedClip[numero];
+    if(!list||!list.length)return 0;
+    let total=0;
+    list.forEach(function(key){
+      const us=key.lastIndexOf("_");
+      const src=key.slice(0,us);
+      const idx=parseInt(key.slice(us+1));
+      total+=getClipDuration(numero,src,idx);
+    });
+    return total;
+  };
+  const runAssembly=async function(){
+    setShowAssembleWarning(false);
+    setAssembling(true);setAssembleError("");setAssembledUrl("");
+    try{
+      if(!script||!script.escenas)throw new Error("No hay guion generado.");
+      const clipList=[];
+      for(const e of script.escenas){
+        const urls=pickClipUrls(e.numero);
+        if(!urls.length)throw new Error("Falta un clip para la escena "+e.numero+". Selecciona al menos un clip primero.");
+        urls.forEach(function(u){clipList.push({url:u});});
+      }
+      let audioSrc=ownAudioUrl||"";
+      if(!audioSrc){
+        const first=script.escenas[0];
+        if(genAudio[first.numero])audioSrc=genAudio[first.numero];
+      }
+      const resultUrl=await assembleVideo(clipList,audioSrc,function(msg){setAssembleProgress(msg);});
+      setAssembledUrl(resultUrl);
+    }catch(e){setAssembleError(e.message||"Error ensamblando el video.");}
+    setAssembling(false);setAssembleProgress("");
+  };
 
   const handleAudioUpload=function(ev){
     const file=ev.target.files&&ev.target.files[0];
@@ -1427,6 +1666,21 @@ function LongFormPage(props){
     setCustomClip(function(p){const np=Object.assign({},p);np[numero]={url:url,name:file.name};return np;});
   };
 
+  const getFirstClipPoster=function(numero){
+    const cl=clips[numero];
+    if(!cl)return null;
+    const list=selectedClip[numero];
+    let src="px",idx=0;
+    if(list&&list.length){
+      const us=list[0].lastIndexOf("_");
+      src=list[0].slice(0,us);
+      idx=parseInt(list[0].slice(us+1));
+    }
+    const v=src==="px"?(cl.px&&cl.px[idx]):(cl.pb&&cl.pb[idx]);
+    if(!v)return null;
+    if(src==="px")return v.image||null;
+    return v.picture_id?("https://i.vimeocdn.com/video/"+v.picture_id+"_295x166.jpg"):null;
+  };
   const pickClipUrls=function(numero){
     if(customClip[numero])return [customClip[numero].url];
     const list=selectedClip[numero];
@@ -1467,13 +1721,21 @@ function LongFormPage(props){
     setZipLoading(true);
     try{
       const entries=[];
+      if(discloseAI)entries.push({text:"RECORDATORIO DE DIVULGACION - YouTube\n\nEste video fue producido con voz generada por IA. Antes de publicar:\n1. En YouTube Studio, ve a Detalles del video - Mas opciones.\n2. Activa el interruptor Contenido alterado o sintetico.\n3. Marca la opcion correspondiente a voz o audio generado por IA.\n\nEsto no afecta la monetizacion ni el alcance del video, pero evita strikes de la plataforma por incumplimiento de politicas de divulgacion (Inauthentic Content Policy, 2026)."+(paletteNote?("\n\nPaleta / tono visual definido para este video: "+paletteNote):""),path:"recordatorio_divulgacion.txt"});
+      const audioUrlsOrdenados=[];
       for(const e of script.escenas){
         const folder="bloque_"+padNum(e.numero)+"_"+e.tipo+"/";
         entries.push({text:e.guion,path:folder+"guion.txt"});
         const audioUrl=genAudio[e.numero];
-        if(audioUrl)entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});
+        if(audioUrl){entries.push({url:audioUrl,path:folder+"audio."+extFromUrl(audioUrl)});audioUrlsOrdenados.push(audioUrl);}
         const clipUrls=pickClipUrls(e.numero);
         clipUrls.forEach(function(u,i){entries.push({url:u,path:folder+"clip_"+(i+1)+"."+extFromUrl(u)});});
+      }
+      if(ownAudioUrl){
+        entries.push({url:ownAudioUrl,path:"audio_completo."+extFromUrl(ownAudioUrl)});
+      }else if(audioUrlsOrdenados.length>0){
+        const wavBlob=await concatAudioToWav(audioUrlsOrdenados);
+        if(wavBlob)entries.push({blob:wavBlob,path:"audio_completo.wav"});
       }
       await buildZip(entries,(script.titulo||"video_largo")+".zip");
     }catch(err){}
@@ -1565,6 +1827,13 @@ function LongFormPage(props){
           <div className="kwr">{script.palabras_clave&&script.palabras_clave.map(function(kw){return <span key={kw} className="tag ta">{kw}</span>;})}</div>
           <div style={{marginTop:12,display:"flex",gap:10}}><span className="tag tg">⏱ {script.duracion_total}</span><span className="tag tok">{script.escenas?script.escenas.length:0} bloques</span></div>
           {ownAudioUrl&&<audio controls src={ownAudioUrl} style={{width:"100%",marginTop:10}}/>}
+          <input className="inp" style={{marginTop:10,fontSize:12}} placeholder="🎨 Paleta / tono visual del video (ej: cálido, desaturado, luz natural) — checklist de referencia al elegir clips" value={paletteNote} onChange={function(ev){setPaletteNote(ev.target.value);}}/>
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:10,fontSize:12,color:"#a0a0c0",cursor:"pointer"}}>
+            <input type="checkbox" checked={discloseAI} onChange={function(ev){setDiscloseAI(ev.target.checked);}}/>
+            🏷️ Marcar como contenido alterado/sintetico en YouTube Studio antes de publicar
+          </label>
+          {discloseAI&&<div className="alert ainf" style={{fontSize:11,marginTop:8}}>Recordatorio: en YouTube Studio → Detalles del video → Mas opciones, activa "Contenido alterado o sintetico" (voz generada por IA). Esto no afecta la monetizacion ni el alcance, pero evita strikes por incumplimiento de divulgacion.</div>}
+          {structWarning&&<div className="alert aerr" style={{fontSize:11,marginTop:8}}>{structWarning}</div>}
         </div>
 
         <div className="card">
@@ -1606,6 +1875,19 @@ function LongFormPage(props){
           </div>}
         </div>:null}
 
+        {script.escenas&&script.escenas.some(function(e){return getFirstClipPoster(e.numero);})&&<div style={{marginBottom:14}}>
+          <span className="lbl">🎞️ Storyboard — coherencia visual entre escenas</span>
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6}}>
+            {script.escenas.map(function(e){
+              const poster=getFirstClipPoster(e.numero);
+              return <div key={e.numero} style={{flex:"0 0 auto",width:70}}>
+                <div style={{width:70,height:100,borderRadius:8,background:poster?("#000 url("+JSON.stringify(poster).slice(1,-1)+") center/cover"):"#ffffff10",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#7878a0",overflow:"hidden"}}>{!poster&&"sin clip"}</div>
+                <div style={{fontSize:9,color:"#7878a0",textAlign:"center",marginTop:2}}>#{e.numero} {e.tipo}</div>
+              </div>;
+            })}
+          </div>
+        </div>}
+
         {script.escenas&&script.escenas.map(function(e){
           return <div key={e.numero} className="sc">
             <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={function(){setOpen(open===e.numero?null:e.numero);}}>
@@ -1614,7 +1896,7 @@ function LongFormPage(props){
                 <div style={{fontSize:11,fontWeight:700,color:sc[e.tipo]||"#6c3fff",textTransform:"uppercase"}}>{e.tipo}</div>
                 <div style={{fontSize:14,fontWeight:600}}>{e.titulo_bloque}</div>
               </div>
-              <div style={{display:"flex",gap:10,alignItems:"center"}}><span className="tag">{e.duracion}</span><span style={{color:"#7878a0"}}>{open===e.numero?"▲":"▼"}</span></div>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}><span className="tag">{e.duracion}</span>{(function(){const r=sugerirRitmo(e.guion);return r?<span style={{fontSize:10,padding:"3px 8px",borderRadius:10,background:"#ffffff10",color:"#a0a0c0",whiteSpace:"nowrap"}}>{r.icon} {r.tipo} · {r.rango}</span>:null;})()}<span style={{color:"#7878a0"}}>{open===e.numero?"▲":"▼"}</span></div>
             </div>
             {open===e.numero&&<div>
               <div style={{marginTop:12}}><span className="lbl">Guion</span><div className="stxt">{e.guion}</div><div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><CopyBtn text={e.guion}/></div></div>
@@ -1634,12 +1916,25 @@ function LongFormPage(props){
               </div>
 
               {(videoSource[e.numero]||"stock")==="stock"&&<div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <span className="lbl" style={{marginBottom:0}}>Clips — {e.busqueda_clip}</span>
-                <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
+              <div style={{marginBottom:8}}>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:(termKind[e.numero]||"literal")==="literal"?"#6c3fff":"transparent",color:(termKind[e.numero]||"literal")==="literal"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"literal");}}>🔎 Literal</button>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:termKind[e.numero]==="metaforica"?"#6c3fff":"transparent",color:termKind[e.numero]==="metaforica"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"metaforica");}}>🎭 Metafórico</button>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:termKind[e.numero]==="textura"?"#6c3fff":"transparent",color:termKind[e.numero]==="textura"?"#fff":"#a0a0c0"}} onClick={function(){fetchClips(e,"textura");}}>🌫️ Textura</button>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span className="lbl" style={{marginBottom:0,fontSize:11}}>{getBusquedaTerm(e,termKind[e.numero]||"literal")}</span>
+                  <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){fetchClips(e);}} disabled={loadClips[e.numero]}>{loadClips[e.numero]?"Buscando...":"🎬 Rebuscar clips"}</button>
+                </div>
               </div>
               {loadClips[e.numero]&&<div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>Buscando clips automaticamente...</div>}
               <div style={{fontSize:11,color:"#7878a0",marginBottom:8}}>Esta escena dura varios minutos: el stock sirve como referencia visual, vas a necesitar varios clips distintos al armar el video final en tu editor.</div>
+              {clips[e.numero]&&(function(){
+                const needed=getSceneNeededSeconds(e);
+                const selected=getSelectedSeconds(e.numero);
+                const covered=selected>=needed;
+                return <div style={{fontSize:12,marginBottom:8,color:covered?"#22c55e":"#f0b429",fontWeight:600}}>{covered?"✓ ":"⚠ "}Duración seleccionada: {selected}s / Necesita aprox: {needed}s</div>;
+              })()}
               {clips[e.numero]&&<div className="cgrid">
                 {clips[e.numero].px&&clips[e.numero].px.slice(0,3).map(function(v,idx){
                   const order=getSelectedOrder(e.numero,"px",idx);
@@ -1675,6 +1970,36 @@ function LongFormPage(props){
             <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:14,fontSize:12}} onClick={function(){downloadSceneZip(e);}} disabled={zipLoading}>{zipLoading?"⏳ Preparando...":"📦 Descargar este bloque (audio + clips)"}</button>
           </div>;
         })}
+
+        <div className="card" style={{borderColor:"#f0b429"}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>🎬 Ensamblar video final</div>
+          <div style={{fontSize:12,color:"#7878a0",marginBottom:14,lineHeight:1.6}}>Une los clips seleccionados de todas las escenas con el audio en un solo video MP4 descargable, directamente en tu navegador.</div>
+          <div className="alert ainf" style={{fontSize:12}}>⚠️ Esta funcion procesa video dentro del navegador y en videos largos consume bastante mas memoria y tiempo que en un Short. Funciona mejor en computadora. En celular puede ser lenta o fallar por memoria limitada — usa wifi y no cambies de app mientras procesa. Si falla, arma el video en tu editor con los clips descargados del ZIP.</div>
+          {assembleError&&<div className="alert aerr">⚠️ {assembleError}</div>}
+          {!assembling&&!assembledUrl&&<button className="btn bg" onClick={function(){setShowAssembleWarning(true);}} style={{width:"100%",justifyContent:"center"}}>🎬 Ensamblar video</button>}
+          {assembling&&<div className="loader"><div className="spin"/><span>{assembleProgress||"Procesando..."}</span></div>}
+          {assembledUrl&&<div>
+            <video controls src={assembledUrl} style={{width:"100%",borderRadius:10,marginBottom:12}}/>
+            <a href={assembledUrl} download="viralscript-video-largo.mp4" className="btn bp" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>⬇️ Descargar video</a>
+          </div>}
+        </div>
+
+        {showAssembleWarning&&<div className="modal" onClick={function(){setShowAssembleWarning(false);}}>
+          <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
+            <div style={{fontSize:17,fontWeight:700,marginBottom:14}}>⚠️ Antes de continuar</div>
+            <div style={{fontSize:13,color:"#e8e8f0",lineHeight:1.7,marginBottom:20}}>
+              El ensamblado de video corre dentro de tu navegador y consume bastante memoria y bateria, mas aun en un video largo. Recomendado hacerlo desde computadora.<br/><br/>
+              Recomendaciones:<br/>
+              • Usa wifi, no datos moviles<br/>
+              • No cambies de app mientras procesa<br/>
+              • Si falla, prueba desde una computadora o arma el video en tu editor con el ZIP descargado
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn bs" style={{flex:1,justifyContent:"center"}} onClick={function(){setShowAssembleWarning(false);}}>Cancelar</button>
+              <button className="btn bg" style={{flex:1,justifyContent:"center"}} onClick={runAssembly}>Continuar</button>
+            </div>
+          </div>
+        </div>}
       </div>}
     </div>
   );
