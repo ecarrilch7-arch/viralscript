@@ -211,8 +211,30 @@ async function searchPixabay(query, config) {
   if (!res.ok) return [];
   return (await res.json()).hits || [];
 }
+let _wakeLock=null;
+async function acquireWakeLock() {
+  try {
+    if ("wakeLock" in navigator) { _wakeLock = await navigator.wakeLock.request("screen"); }
+  } catch (err) {}
+}
+async function releaseWakeLock() {
+  try {
+    if (_wakeLock) { await _wakeLock.release(); _wakeLock=null; }
+  } catch (err) {}
+}
+async function fetchWithRetry(url, options, retries) {
+  const n = retries===undefined?2:retries;
+  for (let i=0; i<=n; i++) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      if (i===n) throw new Error("Se perdio la conexion con el servidor. Revisa tu wifi/datos e intenta de nuevo.");
+      await new Promise(function(r){setTimeout(r, 1200*(i+1));});
+    }
+  }
+}
 async function callClaude(prompt, config) {
-  const res = await fetch("/api/claude", {
+  const res = await fetchWithRetry("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey: config.anthropicKey, messages: [{ role: "user", content: prompt }] }),
@@ -900,6 +922,7 @@ function ShortsPage(props){
   const generate=async function(){
     if(!topic.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);setStructWarning("");
+    acquireWakeLock();
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
@@ -939,11 +962,13 @@ function ShortsPage(props){
       autoFetchAllClips(finalScript);
     }catch(e){setError(e.message||"Error generando. Verifica tu Anthropic API key y saldo.");}
     setLoading(false);setLoadingStep("");
+    releaseWakeLock();
   };
 
   const useOwnScript=async function(){
     if(!ownScript.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
+    acquireWakeLock();
     setLoadingStep("Analizando tu guion y dividiendo en escenas...");
     try{
       const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
@@ -955,6 +980,7 @@ function ShortsPage(props){
       autoFetchAllClips(finalScript);
     }catch(e){setError(e.message||"Error procesando tu guion. Verifica tu Anthropic API key.");}
     setLoading(false);setLoadingStep("");
+    releaseWakeLock();
   };
 
   const autoFetchAllClips=async function(scr){
@@ -1203,7 +1229,7 @@ function ShortsPage(props){
       </div>}
 
       {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>{loadingStep||"Procesando..."}</span></div>}
+      {loading&&<div><div className="loader"><div className="spin"/><span>{loadingStep||"Procesando..."}</span></div><div style={{fontSize:11,color:"#7878a0",marginTop:-6,marginBottom:10}}>📵 No bloquees la pantalla ni cambies de app mientras genera, puede cortar la conexion.</div></div>}
 
       {script&&<div>
         {restoredFromHistory&&<div className="alert ainf" style={{fontSize:12,marginBottom:10}}>🕒 Este es tu último guion generado, restaurado automáticamente. <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={function(){setHistory(loadShortsHistory());setShowHistory(true);}}>Ver historial completo</span></div>}
@@ -1531,6 +1557,7 @@ function LongFormPage(props){
   const generate=async function(){
     if(!topic.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);setStructWarning("");
+    acquireWakeLock();
     try{
       const lObj=LANGUAGES.find(function(l){return l.code===lang;});
       const lL=lObj?lObj.label:"español neutro";
@@ -1555,11 +1582,13 @@ function LongFormPage(props){
       autoFetchAllClips(finalScript);
     }catch(e){setError(e.message||"Error generando. Verifica tu Anthropic API key.");}
     setLoading(false);
+    releaseWakeLock();
   };
 
   const useOwnScript=async function(){
     if(!ownScript.trim())return;
     setLoading(true);setError("");setScript(null);setClips({});setRestoredFromHistory(false);
+    acquireWakeLock();
     try{
       const prompt="Toma este guion de video largo escrito por el usuario y dividelo en escenas (INTRO, DESARROLLO, CIERRE) sin modificar el texto original, solo organizandolo en bloques logicos segun los cambios de tema o parrafo. Para cada escena inventa un titulo_bloque corto. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra tipo de plano, sujeto y apariencia, entorno, mood, accion, iluminacion y estilo visual, sin corchetes, listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"descripcion\":\"resumen breve\",\"duracion_total\":\"estimado\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para este bloque\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en tantas escenas como haga falta segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
@@ -1571,6 +1600,7 @@ function LongFormPage(props){
       autoFetchAllClips(finalScript);
     }catch(e){setError(e.message||"Error organizando el guion. Verifica tu Anthropic API key.");}
     setLoading(false);
+    releaseWakeLock();
   };
 
   const fetchClips=async function(e,termKindArg){
@@ -1820,7 +1850,7 @@ function LongFormPage(props){
       </div>}
 
       {error&&<div className="alert aerr">⚠️ {error}</div>}
-      {loading&&<div className="loader"><div className="spin"/><span>{loadingStep||"Generando estructura completa..."}</span></div>}
+      {loading&&<div><div className="loader"><div className="spin"/><span>{loadingStep||"Generando estructura completa..."}</span></div><div style={{fontSize:11,color:"#7878a0",marginTop:-6,marginBottom:10}}>📵 No bloquees la pantalla ni cambies de app mientras genera, puede cortar la conexion.</div></div>}
 
       {script&&<div>
         {restoredFromHistory&&<div className="alert ainf" style={{fontSize:12,marginBottom:10}}>🕒 Este es tu ultimo video generado, restaurado automaticamente. <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={function(){setHistory(loadLongformHistory());setShowHistory(true);}}>Ver historial completo</span></div>}
