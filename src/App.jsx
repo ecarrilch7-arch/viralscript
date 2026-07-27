@@ -211,6 +211,19 @@ async function searchPixabay(query, config) {
   if (!res.ok) return [];
   return (await res.json()).hits || [];
 }
+async function searchFreesoundMusic(query, config) {
+  const params = new URLSearchParams({
+    query: query,
+    token: config.freesoundKey,
+    fields: "id,name,previews,duration,license",
+    filter: "duration:[15 TO 400]",
+    page_size: "6",
+  });
+  const res = await fetch("https://freesound.org/apiv2/search/text/?" + params);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.results || [];
+}
 let _wakeLock=null;
 async function acquireWakeLock() {
   try {
@@ -351,10 +364,11 @@ async function loadFFmpegLib(){
   return ffmpegInstance;
 }
 
-async function assembleVideo(clipsWithDuration, audioUrl, onProgress){
+async function assembleVideo(clipsWithDuration, audioUrl, logoDataUrl, musicUrl, onProgress){
   const inst=await loadFFmpegLib();
   const ffmpeg=inst.ffmpeg;
   const fetchFile=inst.fetchFile;
+
   onProgress("Descargando clips...");
   const clipNames=[];
   for(let i=0;i<clipsWithDuration.length;i++){
@@ -364,22 +378,86 @@ async function assembleVideo(clipsWithDuration, audioUrl, onProgress){
     await ffmpeg.writeFile(name,data);
     clipNames.push(name);
   }
+
   onProgress("Preparando audio...");
+  let hasNarration=false;
   if(audioUrl){
     const audioData=await fetchFile(audioUrl);
-    await ffmpeg.writeFile("audio.mp3",audioData);
+    await ffmpeg.writeFile("narracion.mp3",audioData);
+    hasNarration=true;
   }
+
+  let hasMusic=false;
+  if(musicUrl){
+    try{
+      const musicData=await fetchFile(musicUrl);
+      await ffmpeg.writeFile("musica.mp3",musicData);
+      hasMusic=true;
+    }catch(err){}
+  }
+
+  let hasLogo=false;
+  if(logoDataUrl){
+    try{
+      const logoData=await fetchFile(logoDataUrl);
+      await ffmpeg.writeFile("logo.png",logoData);
+      hasLogo=true;
+    }catch(err){}
+  }
+
   onProgress("Uniendo clips...");
   const listContent=clipNames.map(function(n){return "file '"+n+"'";}).join("\n");
   await ffmpeg.writeFile("list.txt",listContent);
-  await ffmpeg.exec(["-f","concat","-safe","0","-i","list.txt","-c","copy","-y","merged.mp4"]);
-  onProgress("Sincronizando con audio...");
-  if(audioUrl){
-    await ffmpeg.exec(["-i","merged.mp4","-i","audio.mp3","-c:v","copy","-map","0:v:0","-map","1:a:0","-shortest","-y","final.mp4"]);
-  }else{
-    await ffmpeg.exec(["-i","merged.mp4","-c","copy","-y","final.mp4"]);
+  await ffmpeg.exec(["-f","concat","-safe","0","-i","list.txt","-c","copy","-y","concat.mp4"]);
+
+  const totalDuration=clipsWithDuration.reduce(function(sum,c){return sum+(c.duration||5);},0);
+
+  let videoWithWatermark="concat.mp4";
+  if(hasLogo){
+    onProgress("Aplicando marca de agua...");
+    const appearances=Math.min(5,Math.max(3,Math.floor(totalDuration/8)));
+    const windows=[];
+    for(let i=0;i<appearances;i++){
+      const slot=(totalDuration/appearances)*i;
+      const jitter=Math.random()*(totalDuration/appearances*0.5);
+      const start=Math.min(totalDuration-3,slot+jitter);
+      const end=start+2.5;
+      windows.push("between(t,"+start.toFixed(1)+","+end.toFixed(1)+")");
+    }
+    const enableExpr=windows.join("+");
+    await ffmpeg.exec([
+      "-i","concat.mp4",
+      "-i","logo.png",
+      "-filter_complex",
+      "[1:v]scale=120:-1[wm];[0:v][wm]overlay=W-w-24:H-h-24:enable='"+enableExpr+"'[vout]",
+      "-map","[vout]","-map","0:a?",
+      "-c:a","copy",
+      "-y","watermarked.mp4",
+    ]);
+    videoWithWatermark="watermarked.mp4";
   }
+
+  onProgress("Mezclando audio...");
+  let finalAudioArgs=[];
+  if(hasNarration&&hasMusic){
+    await ffmpeg.exec([
+      "-i","narracion.mp3",
+      "-i","musica.mp3",
+      "-filter_complex",
+      "[1:a]volume=0.15,aloop=loop=-1:size=2e9[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+      "-map","[aout]",
+      "-y","audio_final.mp3",
+    ]);
+    finalAudioArgs=["-i","audio_final.mp3","-map","0:v:0","-map","1:a:0","-shortest"];
+  }else if(hasNarration){
+    finalAudioArgs=["-i","narracion.mp3","-map","0:v:0","-map","1:a:0","-shortest"];
+  }else{
+    finalAudioArgs=["-map","0:v:0"];
+  }
+
   onProgress("Finalizando...");
+  await ffmpeg.exec(["-i",videoWithWatermark].concat(finalAudioArgs).concat(["-c:v","copy","-y","final.mp4"]));
+
   const outputData=await ffmpeg.readFile("final.mp4");
   const blob=new Blob([outputData.buffer],{type:"video/mp4"});
   return URL.createObjectURL(blob);
@@ -505,35 +583,56 @@ function Sidebar(props){
     </div>
   );
 }
-function ChannelForm(props){
-  const initial = props.initial || {name:"",niche:"",language:"es-latam",style:"reflexivo",youtubeUrl:""};
+function ChannelForm(props) {
+  const initial = props.initial || { name: "", niche: "", language: "es-latam", style: "reflexivo", youtubeUrl: "", logo: "" };
   const onSave = props.onSave, onCancel = props.onCancel;
-  const [form,setForm]=useState(initial);
-  const f=function(k){return function(e){setForm(function(p){const np=Object.assign({},p);np[k]=e.target.value;return np;});};};
-  const ok=form.name&&form.name.trim();
-  return(
+  const [form, setForm] = useState(initial);
+  const f = function (k) { return function (e) { setForm(function (p) { const np = Object.assign({}, p); np[k] = e.target.value; return np; }); }; };
+  const ok = form.name && form.name.trim();
+
+  const handleLogoUpload = function (evt) {
+    const file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      setForm(function (p) { return Object.assign({}, p, { logo: reader.result }); });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
     <div className="modal" onClick={onCancel}>
-      <div className="modalbox" onClick={function(e){e.stopPropagation();}}>
-        <div style={{fontSize:17,fontWeight:700,marginBottom:16}}>{initial.id?"✏️ Editar canal":"➕ Nuevo canal"}</div>
-        <div style={{marginBottom:14}}>
+      <div className="modalbox" onClick={function (e) { e.stopPropagation(); }}>
+        <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>{initial.id ? "✏️ Editar canal" : "➕ Nuevo canal"}</div>
+        <div style={{ marginBottom: 14 }}>
           <label className="lbl">Nombre del canal</label>
-          <input className="inp" placeholder="Viaje al Interior..." value={form.name} onChange={f("name")}/>
+          <input className="inp" placeholder="Viaje al Interior..." value={form.name} onChange={f("name")} />
         </div>
-        <div style={{marginBottom:14}}>
+        <div style={{ marginBottom: 14 }}>
           <label className="lbl">Nicho principal</label>
-          <input className="inp" placeholder="Espiritualidad, finanzas..." value={form.niche} onChange={f("niche")}/>
+          <input className="inp" placeholder="Espiritualidad, finanzas..." value={form.niche} onChange={f("niche")} />
         </div>
-        <div className="g2" style={{marginBottom:14}}>
-          <div><label className="lbl">Idioma</label><select className="inp" value={form.language} onChange={f("language")}>{LANGUAGES.map(function(l){return <option key={l.code} value={l.code}>{l.label}</option>;})}</select></div>
-          <div><label className="lbl">Estilo</label><select className="inp" value={form.style} onChange={f("style")}>{STYLES.map(function(s){return <option key={s.code} value={s.code}>{s.label}</option>;})}</select></div>
+        <div className="g2" style={{ marginBottom: 14 }}>
+          <div><label className="lbl">Idioma</label><select className="inp" value={form.language} onChange={f("language")}>{LANGUAGES.map(function (l) { return <option key={l.code} value={l.code}>{l.label}</option>; })}</select></div>
+          <div><label className="lbl">Estilo</label><select className="inp" value={form.style} onChange={f("style")}>{STYLES.map(function (s) { return <option key={s.code} value={s.code}>{s.label}</option>; })}</select></div>
         </div>
-        <div style={{marginBottom:20}}>
+        <div style={{ marginBottom: 14 }}>
           <label className="lbl">URL del canal de YouTube (opcional)</label>
-          <input className="inp" placeholder="https://youtube.com/@..." value={form.youtubeUrl||""} onChange={f("youtubeUrl")}/>
+          <input className="inp" placeholder="https://youtube.com/@..." value={form.youtubeUrl || ""} onChange={f("youtubeUrl")} />
         </div>
-        <div style={{display:"flex",gap:10}}>
-          <button className="btn bs" style={{flex:1,justifyContent:"center"}} onClick={onCancel}>Cancelar</button>
-          <button className="btn bp" style={{flex:1,justifyContent:"center"}} onClick={function(){if(ok)onSave(form);}} disabled={!ok}>Guardar</button>
+        <div style={{ marginBottom: 20 }}>
+          <label className="lbl">Logo del canal (para watermark)</label>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <label className="btn bs" style={{ cursor: "pointer" }}>
+              🖼️ Subir logo
+              <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoUpload} />
+            </label>
+            {form.logo && <img src={form.logo} alt="logo" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="btn bs" style={{ flex: 1, justifyContent: "center" }} onClick={onCancel}>Cancelar</button>
+          <button className="btn bp" style={{ flex: 1, justifyContent: "center" }} onClick={function () { if (ok) onSave(form); }} disabled={!ok}>Guardar</button>
         </div>
       </div>
     </div>
@@ -542,7 +641,7 @@ function ChannelForm(props){
 
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:"",freesoundKey:""});
   const [saved,setSaved]=useState(false);
   const [channels,setChannels]=useState(loadChannels());
   const [activeId,setActiveId]=useState(loadActiveChannelId());
@@ -551,7 +650,7 @@ function ConfigPage(props){
 
   useEffect(function(){
     if(channels.length===0&&config&&(config.channelName||config.niche)){
-      const migrated=[{id:"ch_"+Date.now(),name:config.channelName||"Mi canal",niche:config.niche||"",language:config.language||"es-latam",style:config.style||"reflexivo",youtubeUrl:""}];
+      const migrated=[{id:"ch_"+Date.now(),name:config.channelName||"Mi canal",niche:config.niche||"",language:config.language||"es-latam",style:config.style||"reflexivo",youtubeUrl:"",logo:""}];
       setChannels(migrated);
       saveChannels(migrated);
       setActiveId(migrated[0].id);
@@ -604,7 +703,7 @@ function ConfigPage(props){
       {saved&&<div className="alert aok">✓ Guardado correctamente.</div>}
       <div className="card">
         <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🔑 API Keys</div>
-        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."}].map(function(item){
+        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."},{k:"freesoundKey",l:"Freesound API Key (música de fondo)",p:"Tu clave Freesound"}].map(function(item){
           return <div key={item.k} style={{marginBottom:14}}>
             <label className="lbl">{item.l}</label>
             <input className="inp" type="password" placeholder={item.p} value={form[item.k]||""} onChange={f(item.k)}/>
@@ -626,7 +725,10 @@ function ConfigPage(props){
           return(
             <div key={ch.id} className={"chcard"+(isActive?" chactive":"")}>
               {isActive&&<span className="chbadge">ACTIVO</span>}
-              <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>{ch.name}</div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                {ch.logo&&<img src={ch.logo} alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover"}}/>}
+                <div style={{fontSize:15,fontWeight:700}}>{ch.name}</div>
+              </div>
               <div style={{fontSize:12,color:"#7878a0",marginBottom:8}}>{ch.niche||"Sin nicho definido"}</div>
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
                 <span className="tag ta">{langObj?langObj.label:ch.language}</span>
@@ -869,6 +971,9 @@ function ShortsPage(props){
   const [assembledUrl,setAssembledUrl]=useState("");
   const [assembleError,setAssembleError]=useState("");
   const [showAssembleWarning,setShowAssembleWarning]=useState(false);
+  const [musicResults,setMusicResults]=useState([]);
+  const [selectedMusic,setSelectedMusic]=useState(null);
+  const [loadingMusic,setLoadingMusic]=useState(false);
 
   useEffect(function(){
     setVoiceError("");
@@ -917,6 +1022,17 @@ function ShortsPage(props){
     for(const e of script.escenas){
       await generateAudioForScene(e);
     }
+  };
+
+  const searchMusicForScript=async function(){
+    if(!script||!config.freesoundKey)return;
+    setLoadingMusic(true);
+    try{
+      const q=(script.palabras_clave&&script.palabras_clave[0])||script.titulo||"ambient";
+      const results=await searchFreesoundMusic(q,config);
+      setMusicResults(results);
+    }catch(err){}
+    setLoadingMusic(false);
   };
 
   const generate=async function(){
@@ -971,7 +1087,7 @@ function ShortsPage(props){
     acquireWakeLock();
     setLoadingStep("Analizando tu guion y dividiendo en escenas...");
     try{
-      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
+      const prompt="Toma este guion de YouTube Short escrito por el usuario y divídelo en escenas (HOOK, DESARROLLO, CIERRE) sin modificar el texto original, solo organizándolo. Para prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora. Para busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta que sirva de conector visual). Mantene coherencia de paleta de color y atmosfera entre escenas consecutivas.\nGUION DEL USUARIO:\n"+ownScript+"\n\nResponde SOLO JSON:\n{\"titulo\":\"titulo corto basado en el guion\",\"duracion_total\":\"estimado\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"estimado\",\"guion\":\"texto exacto del usuario para esta parte\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nDivide en 2 a 4 escenas segun el contenido. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
             const finalScript=parseAIJson(text);
       setScript(finalScript);
@@ -1155,7 +1271,13 @@ function ShortsPage(props){
         const first=script.escenas[0];
         if(genAudio[first.numero])audioSrc=genAudio[first.numero];
       }
-      const resultUrl=await assembleVideo(clipList,audioSrc,function(msg){setAssembleProgress(msg);});
+      const resultUrl=await assembleVideo(
+        clipList,
+        audioSrc,
+        config.logo||null,
+        selectedMusic?selectedMusic.previews["preview-hq-mp3"]:null,
+        function(msg){setAssembleProgress(msg);}
+      );
       setAssembledUrl(resultUrl);
     }catch(e){setAssembleError(e.message||"Error ensamblando el video.");}
     setAssembling(false);setAssembleProgress("");
@@ -1295,6 +1417,24 @@ function ShortsPage(props){
             })()}
           </div>}
         </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
+
+        <div className="card">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎵 Música de fondo</div>
+          {!config.freesoundKey&&<div className="alert ainf">💡 Agrega tu API Key de Freesound en Configuración para buscar música de fondo automáticamente.</div>}
+          {config.freesoundKey&&<div>
+            <button className="btn bs" onClick={searchMusicForScript} disabled={loadingMusic}>{loadingMusic?"Buscando...":"🎵 Buscar música para este guion"}</button>
+            {musicResults.length>0&&<div style={{marginTop:12}}>
+              {musicResults.map(function(m){
+                const isSel=selectedMusic&&selectedMusic.id===m.id;
+                return <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #222230"}}>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:isSel?"#22c55e":"transparent",color:isSel?"#0a0a0f":"#a0a0c0"}} onClick={function(){setSelectedMusic(isSel?null:m);}}>{isSel?"✓ Elegida":"Elegir"}</button>
+                  <span style={{fontSize:12,flex:1}}>{m.name}</span>
+                  {m.previews&&m.previews["preview-hq-mp3"]&&<audio controls src={m.previews["preview-hq-mp3"]} style={{height:30,maxWidth:180}}/>}
+                </div>;
+              })}
+            </div>}
+          </div>}
+        </div>
 
         {script.escenas&&script.escenas.some(function(e){return getFirstClipPoster(e.numero);})&&<div style={{marginBottom:14}}>
           <span className="lbl">🎞️ Storyboard — coherencia visual entre escenas</span>
@@ -1479,6 +1619,9 @@ function LongFormPage(props){
   const [videoSource,setVideoSource]=useState({});
   const [customClip,setCustomClip]=useState({});
   const [open,setOpen]=useState(1);
+  const [musicResults,setMusicResults]=useState([]);
+  const [selectedMusic,setSelectedMusic]=useState(null);
+  const [loadingMusic,setLoadingMusic]=useState(false);
 
   const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
   const [voices,setVoices]=useState([]);
@@ -1552,6 +1695,17 @@ function LongFormPage(props){
     for(const e of script.escenas){
       await generateAudioForScene(e);
     }
+  };
+
+  const searchMusicForScript=async function(){
+    if(!script||!config.freesoundKey)return;
+    setLoadingMusic(true);
+    try{
+      const q=(script.palabras_clave&&script.palabras_clave[0])||script.titulo||"ambient";
+      const results=await searchFreesoundMusic(q,config);
+      setMusicResults(results);
+    }catch(err){}
+    setLoadingMusic(false);
   };
 
   const generate=async function(){
@@ -1678,7 +1832,13 @@ function LongFormPage(props){
         const first=script.escenas[0];
         if(genAudio[first.numero])audioSrc=genAudio[first.numero];
       }
-      const resultUrl=await assembleVideo(clipList,audioSrc,function(msg){setAssembleProgress(msg);});
+      const resultUrl=await assembleVideo(
+        clipList,
+        audioSrc,
+        config.logo||null,
+        selectedMusic?selectedMusic.previews["preview-hq-mp3"]:null,
+        function(msg){setAssembleProgress(msg);}
+      );
       setAssembledUrl(resultUrl);
     }catch(e){setAssembleError(e.message||"Error ensamblando el video.");}
     setAssembling(false);setAssembleProgress("");
@@ -1908,6 +2068,24 @@ function LongFormPage(props){
           </div>}
         </div>:null}
 
+        <div className="card">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎵 Música de fondo</div>
+          {!config.freesoundKey&&<div className="alert ainf">💡 Agrega tu API Key de Freesound en Configuración para buscar música de fondo automáticamente.</div>}
+          {config.freesoundKey&&<div>
+            <button className="btn bs" onClick={searchMusicForScript} disabled={loadingMusic}>{loadingMusic?"Buscando...":"🎵 Buscar música para este video"}</button>
+            {musicResults.length>0&&<div style={{marginTop:12}}>
+              {musicResults.map(function(m){
+                const isSel=selectedMusic&&selectedMusic.id===m.id;
+                return <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #222230"}}>
+                  <button className="btn bs" style={{fontSize:11,padding:"4px 10px",background:isSel?"#22c55e":"transparent",color:isSel?"#0a0a0f":"#a0a0c0"}} onClick={function(){setSelectedMusic(isSel?null:m);}}>{isSel?"✓ Elegida":"Elegir"}</button>
+                  <span style={{fontSize:12,flex:1}}>{m.name}</span>
+                  {m.previews&&m.previews["preview-hq-mp3"]&&<audio controls src={m.previews["preview-hq-mp3"]} style={{height:30,maxWidth:180}}/>}
+                </div>;
+              })}
+            </div>}
+          </div>}
+        </div>
+
         {script.escenas&&script.escenas.some(function(e){return getFirstClipPoster(e.numero);})&&<div style={{marginBottom:14}}>
           <span className="lbl">🎞️ Storyboard — coherencia visual entre escenas</span>
           <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6}}>
@@ -2054,8 +2232,8 @@ export default function App(){
     const channels=loadChannels();
     const activeId=loadActiveChannelId();
     const active=channels.find(function(c){return c.id===activeId;});
-    if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||""});
-    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name});
+    if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||"",logo:""});
+    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name,logo:active.logo||""});
   };
   const effectiveConfig=getEffectiveConfig();
 
