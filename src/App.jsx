@@ -580,15 +580,51 @@ function Sidebar(props){
           <span>{n.icon}</span><span>{n.label}</span>
         </div>;
       })}
+      <div className="nitem" onClick={function(){window.open("https://viraltrack-psi.vercel.app/","_blank");}}>
+        <span>📊</span><span>Viraltrack</span>
+      </div>
     </div>
   );
 }
+async function uploadToYouTube(videoBlob, meta, config) {
+  const arrayBuffer = await videoBlob.arrayBuffer();
+  const base64 = btoa(
+    new Uint8Array(arrayBuffer).reduce(function (data, byte) {
+      return data + String.fromCharCode(byte);
+    }, "")
+  );
+  const res = await fetch("/api/youtube-upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientId: config.ytClientId,
+      clientSecret: config.ytClientSecret,
+      refreshToken: config.ytRefreshToken,
+      title: meta.title,
+      description: meta.description || "",
+      videoBase64: base64,
+      privacyStatus: meta.privacyStatus || "private",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Error publicando en YouTube.");
+  return data;
+}
 function ChannelForm(props) {
-  const initial = props.initial || { name: "", niche: "", language: "es-latam", style: "reflexivo", youtubeUrl: "", logo: "" };
-  const onSave = props.onSave, onCancel = props.onCancel;
+  const initial = props.initial || { name: "", niche: "", language: "es-latam", style: "reflexivo", youtubeUrl: "", logo: "", ytRefreshToken: "" };
+  const onSave = props.onSave, onCancel = props.onCancel, appConfig = props.appConfig || {};
   const [form, setForm] = useState(initial);
   const f = function (k) { return function (e) { setForm(function (p) { const np = Object.assign({}, p); np[k] = e.target.value; return np; }); }; };
   const ok = form.name && form.name.trim();
+  const canConnectYT = appConfig.ytClientId && appConfig.ytClientSecret;
+  const ytAuthUrl = canConnectYT ? (
+    "/api/youtube-auth?clientId=" + encodeURIComponent(appConfig.ytClientId) +
+    "&redirectUri=" + encodeURIComponent(
+      window.location.origin + "/api/youtube-callback?clientId=" + appConfig.ytClientId +
+      "&clientSecret=" + appConfig.ytClientSecret +
+      "&redirectUri=" + encodeURIComponent(window.location.origin + "/api/youtube-callback")
+    )
+  ) : "";
 
   const handleLogoUpload = function (evt) {
     const file = evt.target.files && evt.target.files[0];
@@ -630,6 +666,16 @@ function ChannelForm(props) {
             {form.logo && <img src={form.logo} alt="logo" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />}
           </div>
         </div>
+        <div style={{ marginBottom: 20 }}>
+          <label className="lbl">Conexión con YouTube (para publicar)</label>
+          {!canConnectYT && <div className="alert ainf" style={{ fontSize: 12 }}>Primero configura el Client ID y Client Secret de YouTube en Configuración general.</div>}
+          {canConnectYT && <div>
+            <a className="btn bs" href={ytAuthUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", marginBottom: 10 }}>🔗 Conectar este canal con YouTube</a>
+            <div style={{ fontSize: 11, color: "#7878a0", marginBottom: 8 }}>Después de autorizar, Google te muestra un código — pégalo aquí abajo.</div>
+            <input className="inp" placeholder="Pega aquí el Refresh Token" value={form.ytRefreshToken || ""} onChange={f("ytRefreshToken")} />
+            {form.ytRefreshToken && <div style={{ fontSize: 11, color: "#22c55e", marginTop: 6 }}>✓ Canal conectado con YouTube</div>}
+          </div>}
+        </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button className="btn bs" style={{ flex: 1, justifyContent: "center" }} onClick={onCancel}>Cancelar</button>
           <button className="btn bp" style={{ flex: 1, justifyContent: "center" }} onClick={function () { if (ok) onSave(form); }} disabled={!ok}>Guardar</button>
@@ -641,7 +687,7 @@ function ChannelForm(props) {
 
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:"",freesoundKey:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:"",freesoundKey:"",ytClientId:"",ytClientSecret:""});
   const [saved,setSaved]=useState(false);
   const [channels,setChannels]=useState(loadChannels());
   const [activeId,setActiveId]=useState(loadActiveChannelId());
@@ -703,7 +749,7 @@ function ConfigPage(props){
       {saved&&<div className="alert aok">✓ Guardado correctamente.</div>}
       <div className="card">
         <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🔑 API Keys</div>
-        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."},{k:"freesoundKey",l:"Freesound API Key (música de fondo)",p:"Tu clave Freesound"}].map(function(item){
+        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."},{k:"freesoundKey",l:"Freesound API Key (música de fondo)",p:"Tu clave Freesound"},{k:"ytClientId",l:"YouTube OAuth Client ID (para publicar)",p:"xxxx.apps.googleusercontent.com"},{k:"ytClientSecret",l:"YouTube OAuth Client Secret",p:"GOCSPX-..."}].map(function(item){
           return <div key={item.k} style={{marginBottom:14}}>
             <label className="lbl">{item.l}</label>
             <input className="inp" type="password" placeholder={item.p} value={form[item.k]||""} onChange={f(item.k)}/>
@@ -745,7 +791,7 @@ function ConfigPage(props){
         })}
       </div>
 
-      {showForm&&<ChannelForm initial={editingChannel} onSave={saveChannel} onCancel={closeForm}/>}
+      {showForm&&<ChannelForm initial={editingChannel} onSave={saveChannel} onCancel={closeForm} appConfig={form}/>}
     </div>
   );
 }
@@ -974,6 +1020,9 @@ function ShortsPage(props){
   const [musicResults,setMusicResults]=useState([]);
   const [selectedMusic,setSelectedMusic]=useState(null);
   const [loadingMusic,setLoadingMusic]=useState(false);
+  const [publishing,setPublishing]=useState(false);
+  const [publishResult,setPublishResult]=useState(null);
+  const [publishError,setPublishError]=useState("");
 
   useEffect(function(){
     setVoiceError("");
@@ -997,6 +1046,20 @@ function ShortsPage(props){
       }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
     }
   },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
+
+  const publishVideo=async function(){
+    setPublishing(true);setPublishError("");setPublishResult(null);
+    try{
+      const blob=await (await fetch(assembledUrl)).blob();
+      const result=await uploadToYouTube(blob,{
+        title:script.titulo,
+        description:script.escenas?script.escenas.map(function(e){return e.guion;}).join(" "):"",
+        privacyStatus:"private",
+      },config);
+      setPublishResult(result);
+    }catch(err){setPublishError(err.message);}
+    setPublishing(false);
+  };
 
   const previewGeminiVoice=async function(){
     setPreviewLoading(true);setPreviewError("");
@@ -1540,7 +1603,13 @@ function ShortsPage(props){
           {assembling&&<div className="loader"><div className="spin"/><span>{assembleProgress||"Procesando..."}</span></div>}
           {assembledUrl&&<div>
             <video controls src={assembledUrl} style={{width:"100%",borderRadius:10,marginBottom:12}}/>
-            <a href={assembledUrl} download="viralscript-short.mp4" className="btn bp" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>⬇️ Descargar video</a>
+            <div style={{fontSize:12,color:"#7878a0",marginBottom:10}}>Revisa el video antes de publicarlo. Descargarlo es opcional.</div>
+            <a href={assembledUrl} download="viralscript-short.mp4" className="btn bs" style={{width:"100%",justifyContent:"center",textDecoration:"none",marginBottom:10}}>⬇️ Descargar video (opcional)</a>
+            {config.ytRefreshToken?<div>
+              {!publishResult&&<button className="btn bp" onClick={publishVideo} disabled={publishing} style={{width:"100%",justifyContent:"center"}}>{publishing?"⏳ Publicando...":"📤 Publicar en YouTube (privado)"}</button>}
+              {publishError&&<div className="alert aerr" style={{marginTop:10}}>⚠️ {publishError}</div>}
+              {publishResult&&<div className="alert aok" style={{marginTop:10}}>✓ Subido como privado — <a href={publishResult.url} target="_blank" rel="noreferrer" style={{color:"#22c55e"}}>revísalo aquí</a> antes de hacerlo público</div>}
+            </div>:<div className="alert ainf" style={{fontSize:12}}>💡 Conecta este canal con YouTube (en Configuración → editar canal) para poder publicar directo.</div>}
           </div>}
         </div>
 
@@ -1622,6 +1691,9 @@ function LongFormPage(props){
   const [musicResults,setMusicResults]=useState([]);
   const [selectedMusic,setSelectedMusic]=useState(null);
   const [loadingMusic,setLoadingMusic]=useState(false);
+  const [publishing,setPublishing]=useState(false);
+  const [publishResult,setPublishResult]=useState(null);
+  const [publishError,setPublishError]=useState("");
 
   const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
   const [voices,setVoices]=useState([]);
@@ -1670,6 +1742,20 @@ function LongFormPage(props){
   useEffect(function(){
     if(script)autoFetchAllClips(script);
   },[]);
+
+  const publishVideo=async function(){
+    setPublishing(true);setPublishError("");setPublishResult(null);
+    try{
+      const blob=await (await fetch(assembledUrl)).blob();
+      const result=await uploadToYouTube(blob,{
+        title:script.titulo,
+        description:script.descripcion||"",
+        privacyStatus:"private",
+      },config);
+      setPublishResult(result);
+    }catch(err){setPublishError(err.message);}
+    setPublishing(false);
+  };
 
   const previewVoice=async function(){
     setPreviewLoading(true);setPreviewError("");
@@ -2191,7 +2277,13 @@ function LongFormPage(props){
           {assembling&&<div className="loader"><div className="spin"/><span>{assembleProgress||"Procesando..."}</span></div>}
           {assembledUrl&&<div>
             <video controls src={assembledUrl} style={{width:"100%",borderRadius:10,marginBottom:12}}/>
-            <a href={assembledUrl} download="viralscript-video-largo.mp4" className="btn bp" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>⬇️ Descargar video</a>
+            <div style={{fontSize:12,color:"#7878a0",marginBottom:10}}>Revisa el video antes de publicarlo. Descargarlo es opcional.</div>
+            <a href={assembledUrl} download="viralscript-video-largo.mp4" className="btn bs" style={{width:"100%",justifyContent:"center",textDecoration:"none",marginBottom:10}}>⬇️ Descargar video (opcional)</a>
+            {config.ytRefreshToken?<div>
+              {!publishResult&&<button className="btn bp" onClick={publishVideo} disabled={publishing} style={{width:"100%",justifyContent:"center"}}>{publishing?"⏳ Publicando...":"📤 Publicar en YouTube (privado)"}</button>}
+              {publishError&&<div className="alert aerr" style={{marginTop:10}}>⚠️ {publishError}</div>}
+              {publishResult&&<div className="alert aok" style={{marginTop:10}}>✓ Subido como privado — <a href={publishResult.url} target="_blank" rel="noreferrer" style={{color:"#22c55e"}}>revísalo aquí</a> antes de hacerlo público</div>}
+            </div>:<div className="alert ainf" style={{fontSize:12}}>💡 Conecta este canal con YouTube (en Configuración → editar canal) para poder publicar directo.</div>}
           </div>}
         </div>
 
@@ -2232,8 +2324,8 @@ export default function App(){
     const channels=loadChannels();
     const activeId=loadActiveChannelId();
     const active=channels.find(function(c){return c.id===activeId;});
-    if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||"",logo:""});
-    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name,logo:active.logo||""});
+    if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||"",logo:"",ytRefreshToken:""});
+    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name,logo:active.logo||"",ytRefreshToken:active.ytRefreshToken||""});
   };
   const effectiveConfig=getEffectiveConfig();
 
