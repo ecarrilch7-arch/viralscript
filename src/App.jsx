@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import JSZip from "jszip";
+import * as XLSX from "xlsx";
 
 async function buildZip(entries, zipName) {
   const zip = new JSZip();
@@ -171,6 +172,44 @@ function loadActiveChannelId() {
   try { return localStorage.getItem(ACTIVE_CHANNEL_KEY) || null; } catch { return null; }
 }
 function saveActiveChannelId(id) { localStorage.setItem(ACTIVE_CHANNEL_KEY, id); }
+
+const QUEUE_KEY = "viralscript_queue";
+function loadQueue() {
+  try { const raw = localStorage.getItem(QUEUE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
+function saveQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+function parseScriptExcel(file) {
+  return new Promise(function (resolve, reject) {
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        const items = rows
+          .map(function (r) {
+            const guion = r.Guion || r.guion || r.GUION || "";
+            if (!guion.toString().trim()) return null;
+            return {
+              id: "q_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+              guion: guion.toString().trim(),
+              canal: (r.Canal || r.canal || "").toString().trim(),
+              idioma: (r.Idioma || r.idioma || "").toString().trim(),
+              estilo: (r.Estilo || r.estilo || "").toString().trim(),
+              estado: "Pendiente",
+            };
+          })
+          .filter(Boolean);
+        resolve(items);
+      } catch (err) {
+        reject(new Error("No se pudo leer el archivo. Verifica que sea un .xlsx valido con una columna 'Guion'."));
+      }
+    };
+    reader.onerror = function () { reject(new Error("Error leyendo el archivo.")); };
+    reader.readAsArrayBuffer(file);
+  });
+}
 
 const LANGUAGES = [
   { code: "es-latam", label: "Español neutro latinoamericano" },
@@ -1023,6 +1062,9 @@ function ShortsPage(props){
   const [publishing,setPublishing]=useState(false);
   const [publishResult,setPublishResult]=useState(null);
   const [publishError,setPublishError]=useState("");
+  const [queue,setQueue]=useState(function(){return loadQueue();});
+  const [queueLoading,setQueueLoading]=useState(false);
+  const [queueError,setQueueError]=useState("");
 
   useEffect(function(){
     setVoiceError("");
@@ -1160,6 +1202,38 @@ function ShortsPage(props){
     }catch(e){setError(e.message||"Error procesando tu guion. Verifica tu Anthropic API key.");}
     setLoading(false);setLoadingStep("");
     releaseWakeLock();
+  };
+
+  const handleQueueUpload=async function(evt){
+    const file=evt.target.files&&evt.target.files[0];
+    if(!file)return;
+    setQueueError("");setQueueLoading(true);
+    try{
+      const items=await parseScriptExcel(file);
+      if(!items.length){setQueueError("No se encontraron guiones en el archivo. Verifica que tenga una columna 'Guion'.");setQueueLoading(false);return;}
+      const updated=queue.concat(items);
+      setQueue(updated);
+      saveQueue(updated);
+    }catch(err){setQueueError(err.message);}
+    setQueueLoading(false);
+    evt.target.value="";
+  };
+
+  const useQueueItem=function(item){
+    setOwnScript(item.guion);
+    if(item.idioma){
+      const match=LANGUAGES.find(function(l){return l.label.toLowerCase()===item.idioma.toLowerCase()||l.code===item.idioma;});
+      if(match)setLang(match.code);
+    }
+    const updated=queue.map(function(q){return q.id===item.id?Object.assign({},q,{estado:"Usado"}):q;});
+    setQueue(updated);
+    saveQueue(updated);
+  };
+
+  const deleteQueueItem=function(id){
+    const updated=queue.filter(function(q){return q.id!==id;});
+    setQueue(updated);
+    saveQueue(updated);
   };
 
   const autoFetchAllClips=async function(scr){
@@ -1397,6 +1471,26 @@ function ShortsPage(props){
       </div>}
 
       {mode==="own"&&<div className="card">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span className="lbl" style={{marginBottom:0}}>📊 Cola de guiones (Excel)</span>
+          <label className="btn bs" style={{cursor:"pointer",fontSize:12,padding:"5px 12px"}}>
+            {queueLoading?"Leyendo...":"📤 Subir Excel"}
+            <input type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={handleQueueUpload} disabled={queueLoading}/>
+          </label>
+        </div>
+        <div style={{fontSize:11,color:"#7878a0",marginBottom:10}}>El archivo debe tener una columna "Guion" (y opcionalmente Canal, Idioma, Estilo).</div>
+        {queueError&&<div className="alert aerr" style={{fontSize:12}}>⚠️ {queueError}</div>}
+        {queue.filter(function(q){return q.estado==="Pendiente";}).length>0&&<div style={{marginBottom:14}}>
+          {queue.filter(function(q){return q.estado==="Pendiente";}).map(function(q){
+            return <div key={q.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #222230"}}>
+              <div style={{flex:1,fontSize:12,color:"#e8e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{q.guion}</div>
+              <button className="btn bp" style={{fontSize:11,padding:"4px 10px",whiteSpace:"nowrap"}} onClick={function(){useQueueItem(q);}}>Usar</button>
+              <button onClick={function(){deleteQueueItem(q.id);}} style={{background:"transparent",border:"none",color:"#e05252",fontSize:14,cursor:"pointer",padding:"2px 6px"}}>🗑️</button>
+            </div>;
+          })}
+        </div>}
+        {queue.length===0&&<div style={{fontSize:12,color:"#7878a0",marginBottom:10}}>Todavía no subiste ningún archivo.</div>}
+        <div className="div"/>
         <label className="lbl">Pega tu guion completo</label>
         <textarea className="inp" style={{minHeight:160,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} placeholder="Pega aqui tu guion ya escrito..." value={ownScript} onChange={function(e){setOwnScript(e.target.value);}}/>
         <div style={{marginTop:14}}>
