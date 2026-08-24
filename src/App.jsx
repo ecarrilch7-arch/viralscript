@@ -656,13 +656,19 @@ function ChannelForm(props) {
   const f = function (k) { return function (e) { setForm(function (p) { const np = Object.assign({}, p); np[k] = e.target.value; return np; }); }; };
   const ok = form.name && form.name.trim();
   const canConnectYT = appConfig.ytClientId && appConfig.ytClientSecret;
+  // El redirect_uri que Google ve debe ser fijo y simple en los dos pasos del flujo
+  // (autorizacion e intercambio de token) porque Google exige que coincida exactamente
+  // con lo registrado en Google Cloud Console y con lo usado en el paso anterior.
+  // clientId/clientSecret viajan aparte, en el parametro "state" (Google lo reenvia
+  // intacto al callback sin exigir que este pre-registrado), nunca dentro del redirect_uri.
+  const ytRedirectUri = window.location.origin + "/api/youtube-callback";
+  const ytOAuthState = canConnectYT
+    ? btoa(JSON.stringify({ clientId: appConfig.ytClientId, clientSecret: appConfig.ytClientSecret }))
+    : "";
   const ytAuthUrl = canConnectYT ? (
     "/api/youtube-auth?clientId=" + encodeURIComponent(appConfig.ytClientId) +
-    "&redirectUri=" + encodeURIComponent(
-      window.location.origin + "/api/youtube-callback?clientId=" + appConfig.ytClientId +
-      "&clientSecret=" + appConfig.ytClientSecret +
-      "&redirectUri=" + encodeURIComponent(window.location.origin + "/api/youtube-callback")
-    )
+    "&redirectUri=" + encodeURIComponent(ytRedirectUri) +
+    "&state=" + encodeURIComponent(ytOAuthState)
   ) : "";
 
   const handleLogoUpload = function (evt) {
