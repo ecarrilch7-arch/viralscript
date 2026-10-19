@@ -305,15 +305,30 @@ async function getElevenLabsVoices(config) {
   const data = await res.json();
   return data.voices || [];
 }
-async function generateSpeech(text, voiceId, config) {
+async function speakElevenOnce(text, voiceId, apiKey) {
   const res = await fetch("/api/elevenlabs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "speak", apiKey: config.elevenlabsKey, voiceId: voiceId, text: text }),
+    body: JSON.stringify({ action: "speak", apiKey: apiKey, voiceId: voiceId, text: text }),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || "Error generando audio. Verifica tu API key o si se agotaron tus creditos gratuitos de ElevenLabs.");
   return "data:audio/mpeg;base64," + data.audioBase64;
+}
+// Si la clave principal falla (creditos agotados, clave invalida) y hay una clave
+// de respaldo, se reintenta con la de respaldo. Nota: los IDs de voces por defecto
+// son los mismos en todas las cuentas; las voces clonadas/propias no.
+async function generateSpeech(text, voiceId, config) {
+  try {
+    return await speakElevenOnce(text, voiceId, config.elevenlabsKey);
+  } catch (err) {
+    if (!config.elevenlabsKey2) throw err;
+    try {
+      return await speakElevenOnce(text, voiceId, config.elevenlabsKey2);
+    } catch (err2) {
+      throw new Error("Fallaron las dos claves de ElevenLabs. Principal: " + err.message + " | Respaldo: " + err2.message);
+    }
+  }
 }
 const GEMINI_VOICE_DESC={
   Zephyr:"Brillante y clara",Puck:"Enérgica y alegre",Charon:"Informativa, tipo narrador",Kore:"Firme y segura",Fenrir:"Excitable, muy expresiva",
@@ -343,6 +358,147 @@ async function generateSpeechGemini(text, voiceName, config) {
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || "Error generando audio con Gemini. Verifica tu API key.");
   return "data:audio/wav;base64," + data.audioBase64;
+}
+
+// ---------- Cartesia (voz opcional) ----------
+function cartesiaLang(code) {
+  if (!code) return "es";
+  if (code.indexOf("es") === 0) return "es";
+  if (code.indexOf("pt") === 0) return "pt";
+  if (code.indexOf("en") === 0) return "en";
+  return "es";
+}
+async function getCartesiaVoices(config) {
+  const res = await fetch("/api/cartesia", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "voices", apiKey: config.cartesiaKey, language: cartesiaLang(config.language) }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error("Error obteniendo voces de Cartesia.");
+  return data.voices || [];
+}
+async function generateSpeechCartesia(text, voiceId, config) {
+  const res = await fetch("/api/cartesia", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "speak", apiKey: config.cartesiaKey, voiceId: voiceId, text: text, language: cartesiaLang(config.language) }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Error generando audio con Cartesia. Verifica tu API key o tus creditos.");
+  return "data:audio/mpeg;base64," + data.audioBase64;
+}
+
+// ---------- Proveedores de voz ----------
+const VOICE_PROVIDERS = [
+  { code: "eleven", label: "ElevenLabs", key: "elevenlabsKey" },
+  { code: "gemini", label: "Google Gemini", key: "geminiKey" },
+  { code: "cartesia", label: "Cartesia", key: "cartesiaKey" },
+];
+function availableProviders(config) {
+  return VOICE_PROVIDERS.filter(function (pr) { return config && config[pr.key]; });
+}
+function defaultProvider(config) {
+  const av = availableProviders(config);
+  return av.length ? av[0].code : "eleven";
+}
+async function loadVoicesFor(provider, config) {
+  if (provider === "eleven") return await getElevenLabsVoices(config);
+  if (provider === "gemini") {
+    const names = await getGeminiVoices(config);
+    return names.map(function (n) { return { voice_id: n, name: n, desc: GEMINI_VOICE_DESC[n] || "" }; });
+  }
+  if (provider === "cartesia") return await getCartesiaVoices(config);
+  return [];
+}
+
+// ---------- Cache de audio (IndexedDB) ----------
+// Si el mismo texto se pide con el mismo proveedor y la misma voz, se devuelve
+// el audio guardado en vez de volver a gastar creditos.
+const AUDIO_DB = "viralscript_audio_cache";
+const AUDIO_STORE = "audios";
+const AUDIO_CACHE_MAX = 400;
+function openAudioDb() {
+  return new Promise(function (resolve, reject) {
+    if (!window.indexedDB) return reject(new Error("sin indexedDB"));
+    const req = window.indexedDB.open(AUDIO_DB, 1);
+    req.onupgradeneeded = function () { req.result.createObjectStore(AUDIO_STORE, { keyPath: "k" }); };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+async function audioCacheKey(provider, voiceId, text) {
+  const raw = provider + "|" + voiceId + "|" + text.trim();
+  try {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+    return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  } catch (e) {
+    let h = 0; for (let i = 0; i < raw.length; i++) { h = ((h << 5) - h + raw.charCodeAt(i)) | 0; }
+    return "h" + h + "_" + raw.length;
+  }
+}
+async function audioCacheGet(key) {
+  try {
+    const db = await openAudioDb();
+    return await new Promise(function (resolve) {
+      const r = db.transaction(AUDIO_STORE, "readonly").objectStore(AUDIO_STORE).get(key);
+      r.onsuccess = function () { resolve(r.result ? r.result.url : null); };
+      r.onerror = function () { resolve(null); };
+    });
+  } catch (e) { return null; }
+}
+async function audioCachePut(key, url) {
+  try {
+    const db = await openAudioDb();
+    const store = db.transaction(AUDIO_STORE, "readwrite").objectStore(AUDIO_STORE);
+    store.put({ k: key, url: url, t: Date.now() });
+    const all = store.getAll();
+    all.onsuccess = function () {
+      const items = all.result || [];
+      if (items.length > AUDIO_CACHE_MAX) {
+        items.sort(function (a, b) { return a.t - b.t; });
+        items.slice(0, items.length - AUDIO_CACHE_MAX).forEach(function (it) { store.delete(it.k); });
+      }
+    };
+  } catch (e) {}
+}
+async function audioCacheCount() {
+  try {
+    const db = await openAudioDb();
+    return await new Promise(function (resolve) {
+      const r = db.transaction(AUDIO_STORE, "readonly").objectStore(AUDIO_STORE).count();
+      r.onsuccess = function () { resolve(r.result || 0); };
+      r.onerror = function () { resolve(0); };
+    });
+  } catch (e) { return 0; }
+}
+async function audioCacheClear() {
+  try {
+    const db = await openAudioDb();
+    db.transaction(AUDIO_STORE, "readwrite").objectStore(AUDIO_STORE).clear();
+  } catch (e) {}
+}
+// Punto unico para generar voz: revisa el cache, si no esta llama al proveedor.
+async function speak(provider, text, voiceId, config) {
+  const key = await audioCacheKey(provider, voiceId, text);
+  const cached = await audioCacheGet(key);
+  if (cached) return cached;
+  let url;
+  if (provider === "gemini") url = await generateSpeechGemini(text, voiceId, config);
+  else if (provider === "cartesia") url = await generateSpeechCartesia(text, voiceId, config);
+  else url = await generateSpeech(text, voiceId, config);
+  await audioCachePut(key, url);
+  return url;
+}
+
+// ---------- Estilo del canal (se inyecta en los prompts) ----------
+function buildChannelStyleLine(config) {
+  const parts = [];
+  if (config.channelTone && config.channelTone.trim()) parts.push("tono de narracion: " + config.channelTone.trim());
+  if (config.channelRhythm && config.channelRhythm.trim()) parts.push("ritmo: " + config.channelRhythm.trim());
+  if (config.channelPalette && config.channelPalette.trim()) parts.push("paleta visual para prompt_video y busqueda_clip: " + config.channelPalette.trim());
+  if (!parts.length) return "";
+  return "\nESTILO FIJO DEL CANAL (respetalo siempre, es la identidad del canal): " + parts.join("; ") + ".";
 }
 
 function parseDuration(iso) {
@@ -650,7 +806,7 @@ async function uploadToYouTube(videoBlob, meta, config) {
   return data;
 }
 function ChannelForm(props) {
-  const initial = props.initial || { name: "", niche: "", language: "es-latam", style: "reflexivo", youtubeUrl: "", logo: "", ytRefreshToken: "" };
+  const initial = props.initial || { name: "", niche: "", language: "es-latam", style: "reflexivo", tone: "", rhythm: "", palette: "", youtubeUrl: "", logo: "", ytRefreshToken: "" };
   const onSave = props.onSave, onCancel = props.onCancel, appConfig = props.appConfig || {};
   const [form, setForm] = useState(initial);
   const f = function (k) { return function (e) { setForm(function (p) { const np = Object.assign({}, p); np[k] = e.target.value; return np; }); }; };
@@ -697,6 +853,16 @@ function ChannelForm(props) {
           <div><label className="lbl">Idioma</label><select className="inp" value={form.language} onChange={f("language")}>{LANGUAGES.map(function (l) { return <option key={l.code} value={l.code}>{l.label}</option>; })}</select></div>
           <div><label className="lbl">Estilo</label><select className="inp" value={form.style} onChange={f("style")}>{STYLES.map(function (s) { return <option key={s.code} value={s.code}>{s.label}</option>; })}</select></div>
         </div>
+        <div style={{ marginBottom: 14, padding: 12, border: "1px solid #222230", borderRadius: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>🎨 Estilo fijo del canal (opcional)</div>
+          <div style={{ fontSize: 11, color: "#7878a0", marginBottom: 10 }}>Se aplica a todos los guiones de este canal para que los videos se sientan de la misma marca.</div>
+          <label className="lbl">Tono de narración</label>
+          <input className="inp" style={{ marginBottom: 10 }} placeholder="Cálido y pausado, como un mentor cercano..." value={form.tone || ""} onChange={f("tone")} />
+          <label className="lbl">Ritmo</label>
+          <input className="inp" style={{ marginBottom: 10 }} placeholder="Frases cortas, cortes rápidos en el gancho, más lento al cierre..." value={form.rhythm || ""} onChange={f("rhythm")} />
+          <label className="lbl">Paleta visual</label>
+          <input className="inp" placeholder="Tonos cálidos dorados, luz de atardecer, naturaleza..." value={form.palette || ""} onChange={f("palette")} />
+        </div>
         <div style={{ marginBottom: 14 }}>
           <label className="lbl">URL del canal de YouTube (opcional)</label>
           <input className="inp" placeholder="https://youtube.com/@..." value={form.youtubeUrl || ""} onChange={f("youtubeUrl")} />
@@ -732,12 +898,14 @@ function ChannelForm(props) {
 
 function ConfigPage(props){
   const config = props.config, setConfig = props.setConfig;
-  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",geminiKey:"",freesoundKey:"",ytClientId:"",ytClientSecret:""});
+  const [form,setForm]=useState(config||{youtubeKey:"",pexelsKey:"",pixabayKey:"",anthropicKey:"",elevenlabsKey:"",elevenlabsKey2:"",geminiKey:"",cartesiaKey:"",freesoundKey:"",ytClientId:"",ytClientSecret:""});
   const [saved,setSaved]=useState(false);
   const [channels,setChannels]=useState(loadChannels());
   const [activeId,setActiveId]=useState(loadActiveChannelId());
   const [editingChannel,setEditingChannel]=useState(null);
   const [showForm,setShowForm]=useState(false);
+  const [cacheCount,setCacheCount]=useState(null);
+  useEffect(function(){audioCacheCount().then(setCacheCount);},[]);
 
   useEffect(function(){
     if(channels.length===0&&config&&(config.channelName||config.niche)){
@@ -794,7 +962,7 @@ function ConfigPage(props){
       {saved&&<div className="alert aok">✓ Guardado correctamente.</div>}
       <div className="card">
         <div style={{fontSize:15,fontWeight:700,marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>🔑 API Keys</div>
-        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."},{k:"freesoundKey",l:"Freesound API Key (música de fondo)",p:"Tu clave Freesound"},{k:"ytClientId",l:"YouTube OAuth Client ID (para publicar)",p:"xxxx.apps.googleusercontent.com"},{k:"ytClientSecret",l:"YouTube OAuth Client Secret",p:"GOCSPX-..."}].map(function(item){
+        {[{k:"youtubeKey",l:"YouTube Data API Key",p:"AIza..."},{k:"pexelsKey",l:"Pexels API Key",p:"Tu clave Pexels"},{k:"pixabayKey",l:"Pixabay API Key (opcional)",p:"Tu clave Pixabay"},{k:"anthropicKey",l:"Anthropic API Key",p:"sk-ant-..."},{k:"elevenlabsKey",l:"ElevenLabs API Key (opcional)",p:"Tu clave ElevenLabs"},{k:"elevenlabsKey2",l:"ElevenLabs API Key de respaldo (opcional, se usa si la principal falla)",p:"Segunda clave ElevenLabs"},{k:"geminiKey",l:"Google Gemini API Key (opcional, voz alternativa)",p:"AIza..."},{k:"cartesiaKey",l:"Cartesia API Key (opcional, voz alternativa)",p:"sk_car_..."},{k:"freesoundKey",l:"Freesound API Key (música de fondo)",p:"Tu clave Freesound"},{k:"ytClientId",l:"YouTube OAuth Client ID (para publicar)",p:"xxxx.apps.googleusercontent.com"},{k:"ytClientSecret",l:"YouTube OAuth Client Secret",p:"GOCSPX-..."}].map(function(item){
           return <div key={item.k} style={{marginBottom:14}}>
             <label className="lbl">{item.l}</label>
             <input className="inp" type="password" placeholder={item.p} value={form[item.k]||""} onChange={f(item.k)}/>
@@ -802,6 +970,11 @@ function ConfigPage(props){
         })}
       </div>
       <button className="btn bp" onClick={save} disabled={!ok} style={{width:"100%",justifyContent:"center",padding:14,marginBottom:24}}>{ok?"💾 Guardar configuración":"Completa las API keys para continuar"}</button>
+      <div className="card">
+        <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>♻️ Audio guardado (caché)</div>
+        <div style={{fontSize:12,color:"#7878a0",marginBottom:10}}>Los audios generados se guardan en este dispositivo. Si vuelves a generar una escena con el mismo texto y la misma voz, se reutiliza sin gastar créditos. Audios guardados: {cacheCount===null?"...":cacheCount}</div>
+        <button className="btn bs" style={{fontSize:12,padding:"6px 14px"}} onClick={function(){audioCacheClear().then(function(){setCacheCount(0);});}}>🗑️ Vaciar caché de audio</button>
+      </div>
 
       <div className="card">
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingBottom:10,borderBottom:"1px solid #222230"}}>
@@ -1041,7 +1214,7 @@ function ShortsPage(props){
   const [ownScript,setOwnScript]=useState("");
   const [ownAudioName,setOwnAudioName]=useState("");
   const [ownAudioUrl,setOwnAudioUrl]=useState("");
-  const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
+  const [voiceProvider,setVoiceProvider]=useState(defaultProvider(config));
   const [previewLoading,setPreviewLoading]=useState(false);
   const [previewError,setPreviewError]=useState("");
   const [voices,setVoices]=useState([]);
@@ -1076,24 +1249,16 @@ function ShortsPage(props){
     setVoiceError("");
     setVoices([]);
     setVoiceId("");
-    if(voiceProvider==="eleven"&&config.elevenlabsKey){
+    const prov=VOICE_PROVIDERS.find(function(pr){return pr.code===voiceProvider;});
+    if(prov&&config[prov.key]){
       setLoadVoices(true);
-      getElevenLabsVoices(config).then(function(v){
+      loadVoicesFor(voiceProvider,config).then(function(v){
         setVoices(v);
         if(v.length)setVoiceId(v[0].voice_id);
         setLoadVoices(false);
-      }).catch(function(){setVoiceError("No se pudo conectar con ElevenLabs. Verifica tu API key.");setLoadVoices(false);});
+      }).catch(function(){setVoiceError("No se pudo conectar con "+prov.label+". Verifica tu API key.");setLoadVoices(false);});
     }
-    if(voiceProvider==="gemini"&&config.geminiKey){
-      setLoadVoices(true);
-      getGeminiVoices(config).then(function(names){
-        const v=names.map(function(n){return {voice_id:n,name:n,desc:GEMINI_VOICE_DESC[n]||""};});
-        setVoices(v);
-        if(v.length)setVoiceId(v[0].voice_id);
-        setLoadVoices(false);
-      }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
-    }
-  },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
+  },[config.elevenlabsKey,config.geminiKey,config.cartesiaKey,config.language,voiceProvider]);
 
   const publishVideo=async function(){
     setPublishing(true);setPublishError("");setPublishResult(null);
@@ -1112,7 +1277,7 @@ function ShortsPage(props){
   const previewGeminiVoice=async function(){
     setPreviewLoading(true);setPreviewError("");
     try{
-      const audioUrl=await generateSpeechGemini("Hola, así suena mi voz.",voiceId,config);
+      const audioUrl=await speak(voiceProvider,"Hola, así suena mi voz.",voiceId,config);
       const audio=new Audio(audioUrl);
       audio.play();
     }catch(err){setPreviewError(err.message);}
@@ -1122,7 +1287,7 @@ function ShortsPage(props){
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(cleanGuion,voiceId,config):await generateSpeech(cleanGuion,voiceId,config);
+      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=await speak(voiceProvider,cleanGuion,voiceId,config);
       setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
     }catch(err){setError(err.message);}
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -1176,7 +1341,7 @@ function ShortsPage(props){
 
       setLoadingStep("Paso 4/4 — Desarrollando guion completo y cierre...");
       const charLine=characterStyle.trim()?("\\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
-      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico, ej 'person writing notebook slow motion office desk'), 'metaforica' (una imagen simbolica que represente la idea sin mostrarla literalmente, ej para 'decision dificil' usar 'crossroads path fog slow motion'), y 'textura' (un plano de ambiente/textura abstracta que sirva de conector visual, ej 'water ripples close up slow motion'). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre las 3 escenas del short (evita saltos bruscos de tono, por ejemplo de calido a frio sin razon), como si fueran parte del mismo cortometraje."+varLine+"\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nSolo JSON sin markdown.";
+      const p4="Desarrolla el guion completo de este YouTube Short.\nIDEA: "+JSON.stringify(ideaElegida)+"\nESTRUCTURA: "+JSON.stringify(estructura.estructura)+"\nHOOK: "+JSON.stringify(hookData.hook)+"\nIdioma: "+lL+", Estilo: "+sL+". Sin emojis, sin marca personal, lenguaje simple para voz IA, sin listas dentro del guion hablado.\nEl desarrollo debe explicar una idea clara con un ejemplo que se entienda rapido. El final NO debe ser un resumen generico: recuerda el problema inicial desde una nueva perspectiva y cierra con una idea clara que se quede en la cabeza, conectando con el inicio.\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano (close-up, wide shot, etc), sujeto y su apariencia, entorno y ambiente, mood/energia de la escena, accion especifica que hace el sujeto, iluminacion, y estilo visual (cinematic, found-footage, etc). No uses corchetes ni etiquetas, solo texto natural que fluya como una sola descripcion lista para pegar en Veo3, Runway o Sora."+charLine+buildChannelStyleLine(config)+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico, ej 'person writing notebook slow motion office desk'), 'metaforica' (una imagen simbolica que represente la idea sin mostrarla literalmente, ej para 'decision dificil' usar 'crossroads path fog slow motion'), y 'textura' (un plano de ambiente/textura abstracta que sirva de conector visual, ej 'water ripples close up slow motion'). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre las 3 escenas del short (evita saltos bruscos de tono, por ejemplo de calido a frio sin razon), como si fueran parte del mismo cortometraje."+varLine+"\nResponde SOLO JSON:\n{\"titulo\":\"texto\",\"duracion_total\":\"55-60 segundos\",\"escenas\":[{\"numero\":1,\"tipo\":\"HOOK\",\"duracion\":\"3 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":2,\"tipo\":\"DESARROLLO\",\"duracion\":\"45 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}},{\"numero\":3,\"tipo\":\"CIERRE\",\"duracion\":\"10 segundos\",\"guion\":\"texto\",\"prompt_video\":\"prompt ingles\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nSolo JSON sin markdown.";
       const text=await callClaude(p4,config);
             const finalScript=parseAIJson(text);
       setScript(finalScript);
@@ -1540,15 +1705,15 @@ function ShortsPage(props){
           <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:12}} onClick={downloadAllZip} disabled={zipLoading}>{zipLoading?"⏳ Preparando ZIP...":"📦 Descargar todo (audio + clips, por escena)"}</button>
         </div>
 
-        {(config.elevenlabsKey||config.geminiKey)?<div className="card">
+        {availableProviders(config).length>0?<div className="card">
           <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio</div>
-          {config.elevenlabsKey&&config.geminiKey&&<div style={{marginBottom:12}}>
+          {availableProviders(config).length>1&&<div style={{marginBottom:12}}>
             <label className="lbl">Proveedor de voz</label>
             <select className="inp" value={voiceProvider} onChange={function(e){setVoiceProvider(e.target.value);}}>
-              <option value="eleven">ElevenLabs</option>
-              <option value="gemini">Google Gemini</option>
+              {availableProviders(config).map(function(pr){return <option key={pr.code} value={pr.code}>{pr.label}</option>;})}
             </select>
           </div>}
+          <div style={{fontSize:11,color:"#7878a0",marginBottom:10}}>♻️ Si una escena no cambió, se reutiliza el audio ya generado (no gasta créditos).</div>
           {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
           {loadVoices&&<div style={{fontSize:13,color:"#7878a0"}}>Cargando voces...</div>}
           {voices.length>0&&<div>
@@ -1566,7 +1731,7 @@ function ShortsPage(props){
               </div>
               <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
             </div>
-            {voiceProvider==="gemini"&&voiceId&&<div style={{marginTop:8}}>
+            {voiceProvider!=="eleven"&&voiceId&&<div style={{marginTop:8}}>
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={previewGeminiVoice} disabled={previewLoading}>{previewLoading?"Generando...":"🔊 Probar esta voz"}</button>
               {previewError&&<div style={{fontSize:12,color:"#e05252",marginTop:6}}>⚠️ {previewError}</div>}
             </div>}
@@ -1579,7 +1744,7 @@ function ShortsPage(props){
               </div>;
             })()}
           </div>}
-        </div>:<div className="alert ainf">💡 Agrega tu API Key de ElevenLabs en Configuración para generar audio automáticamente.</div>}
+        </div>:<div className="alert ainf">💡 Agrega una API Key de voz (ElevenLabs, Gemini o Cartesia) en Configuración para generar audio automáticamente.</div>}
 
         <div className="card">
           <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎵 Música de fondo</div>
@@ -1622,7 +1787,7 @@ function ShortsPage(props){
             <span className="lbl">Guion</span>
             <div className="stxt">{e.guion}</div>
             <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><CopyBtn text={e.guion}/></div>
-            {(config.elevenlabsKey||config.geminiKey)&&voiceId&&<div style={{marginBottom:10}}>
+            {availableProviders(config).length>0&&voiceId&&<div style={{marginBottom:10}}>
               <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){generateAudioForScene(e);}} disabled={genAudioLoading[e.numero]}>{genAudioLoading[e.numero]?"Generando audio...":"🎙️ Generar audio de esta escena"}</button>
               {genAudio[e.numero]&&<audio controls src={genAudio[e.numero]} style={{width:"100%",marginTop:8}}/>}
             </div>}
@@ -1795,7 +1960,7 @@ function LongFormPage(props){
   const [publishResult,setPublishResult]=useState(null);
   const [publishError,setPublishError]=useState("");
 
-  const [voiceProvider,setVoiceProvider]=useState(config.elevenlabsKey?"eleven":"gemini");
+  const [voiceProvider,setVoiceProvider]=useState(defaultProvider(config));
   const [voices,setVoices]=useState([]);
   const [voiceId,setVoiceId]=useState("");
   const [loadVoices,setLoadVoices]=useState(false);
@@ -1813,24 +1978,16 @@ function LongFormPage(props){
     setVoiceError("");
     setVoices([]);
     setVoiceId("");
-    if(voiceProvider==="eleven"&&config.elevenlabsKey){
+    const prov=VOICE_PROVIDERS.find(function(pr){return pr.code===voiceProvider;});
+    if(prov&&config[prov.key]){
       setLoadVoices(true);
-      getElevenLabsVoices(config).then(function(v){
+      loadVoicesFor(voiceProvider,config).then(function(v){
         setVoices(v);
         if(v.length)setVoiceId(v[0].voice_id);
         setLoadVoices(false);
-      }).catch(function(){setVoiceError("No se pudo conectar con ElevenLabs. Verifica tu API key.");setLoadVoices(false);});
+      }).catch(function(){setVoiceError("No se pudo conectar con "+prov.label+". Verifica tu API key.");setLoadVoices(false);});
     }
-    if(voiceProvider==="gemini"&&config.geminiKey){
-      setLoadVoices(true);
-      getGeminiVoices(config).then(function(names){
-        const v=names.map(function(n){return {voice_id:n,name:n,desc:GEMINI_VOICE_DESC[n]||""};});
-        setVoices(v);
-        if(v.length)setVoiceId(v[0].voice_id);
-        setLoadVoices(false);
-      }).catch(function(){setVoiceError("No se pudo conectar con Gemini. Verifica tu API key.");setLoadVoices(false);});
-    }
-  },[config.elevenlabsKey,config.geminiKey,voiceProvider]);
+  },[config.elevenlabsKey,config.geminiKey,config.cartesiaKey,config.language,voiceProvider]);
 
   const autoFetchAllClips=async function(scr){
     if(!scr||!scr.escenas)return;
@@ -1860,7 +2017,7 @@ function LongFormPage(props){
   const previewVoice=async function(){
     setPreviewLoading(true);setPreviewError("");
     try{
-      const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini("Hola, asi suena mi voz.",voiceId,config):await generateSpeech("Hola, asi suena mi voz.",voiceId,config);
+      const audioUrl=await speak(voiceProvider,"Hola, asi suena mi voz.",voiceId,config);
       const audio=new Audio(audioUrl);
       audio.play();
     }catch(err){setPreviewError(err.message);}
@@ -1870,7 +2027,7 @@ function LongFormPage(props){
   const generateAudioForScene=async function(e){
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=true;return np;});
     try{
-      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=voiceProvider==="gemini"?await generateSpeechGemini(cleanGuion,voiceId,config):await generateSpeech(cleanGuion,voiceId,config);
+      const cleanGuion=stripVoiceMarkers(e.guion);const audioUrl=await speak(voiceProvider,cleanGuion,voiceId,config);
       setGenAudio(function(p){const np=Object.assign({},p);np[e.numero]=audioUrl;return np;});
     }catch(err){setError(err.message);}
     setGenAudioLoading(function(p){const np=Object.assign({},p);np[e.numero]=false;return np;});
@@ -1908,7 +2065,7 @@ function LongFormPage(props){
       const charLine=characterStyle.trim()?("\nIMPORTANTE: en TODOS los prompt_video, incluye siempre este mismo personaje o estilo visual para mantener consistencia entre escenas: \""+characterStyle.trim()+"\". Integralo naturalmente en la descripcion del sujeto de cada escena."):"";
       const recentHooks=history.slice(0,3).map(function(h){return h.script&&h.script.escenas&&h.script.escenas[0]?h.script.escenas[0].guion:"";}).filter(function(t){return t;});
       const varLine=recentHooks.length?("\nIMPORTANTE - VARIACION: tus ultimos videos de este canal empezaron asi (NO repitas la misma estructura de apertura, palabras ni angulo): "+recentHooks.map(function(t){return JSON.stringify(t.slice(0,140));}).join(" | ")+". El gancho de este nuevo video debe sentirse claramente distinto."):"";
-      const prompt="Sos un guionista experto de YouTube especializado en retencion. Crea la estructura y el guion completo de un video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless (voz en off, sin rostro en camara).\n\nREGLAS DE ESCRITURA QUE DEBES APLICAR SIEMPRE:\n1. Gancho (primera escena, tipo INTRO): debe ser la linea mas poderosa del video. Genera una promesa clara o abre un bucle que el espectador necesite cerrar. Nada de frases gastadas como 'no vas a creer lo que va a pasar'.\n2. La danza (contexto y conflicto): nunca encadenes ideas con 'y... y... y...'. Usa conectores de tension: 'pero' para introducir conflicto, 'por lo tanto' para mostrar consecuencia, 'sin embargo' para generar un giro. Cada escena debe abrir un bucle nuevo antes de cerrar el anterior.\n3. Reenganche a mitad: en la escena central del desarrollo, introduce un giro, un dato inesperado o una pregunta abierta que reactive la curiosidad. No dependas solo del gancho inicial para sostener la atencion.\n4. Ritmo: varia deliberadamente la longitud de las oraciones, no todas cortas ni todas largas. Marca pausas dramaticas con [pausa] donde corresponda dentro del texto de 'guion'.\n5. Enfasis: marca con [enfasis] las palabras o frases clave donde la voz deberia subir el tono o bajar la velocidad.\n6. Personalidad: el guion debe tener un punto de vista unico. Prohibido el formato generico tipo 'X tips para Y' o 'X formas de'. Encuentra un angulo propio o una metafora central que lo diferencie.\n7. Cierre (ultima escena, tipo CIERRE): el punto mas impactante del video va al final, no enterrado en el medio. Construye hacia ese momento desde el inicio y conecta con el gancho, dejando una idea que se quede en la cabeza del espectador.\n\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre escenas consecutivas a lo largo de todo el video, como si fueran parte del mismo cortometraje, evitando saltos bruscos de tono."+varLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras, con marcadores [pausa] y [enfasis] donde corresponda\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
+      const prompt="Sos un guionista experto de YouTube especializado en retencion. Crea la estructura y el guion completo de un video de "+duration+" minutos sobre: "+JSON.stringify(topic)+"\nIdioma: "+lL+", Estilo: "+sL+", "+n+" escenas, canal faceless (voz en off, sin rostro en camara).\n\nREGLAS DE ESCRITURA QUE DEBES APLICAR SIEMPRE:\n1. Gancho (primera escena, tipo INTRO): debe ser la linea mas poderosa del video. Genera una promesa clara o abre un bucle que el espectador necesite cerrar. Nada de frases gastadas como 'no vas a creer lo que va a pasar'.\n2. La danza (contexto y conflicto): nunca encadenes ideas con 'y... y... y...'. Usa conectores de tension: 'pero' para introducir conflicto, 'por lo tanto' para mostrar consecuencia, 'sin embargo' para generar un giro. Cada escena debe abrir un bucle nuevo antes de cerrar el anterior.\n3. Reenganche a mitad: en la escena central del desarrollo, introduce un giro, un dato inesperado o una pregunta abierta que reactive la curiosidad. No dependas solo del gancho inicial para sostener la atencion.\n4. Ritmo: varia deliberadamente la longitud de las oraciones, no todas cortas ni todas largas. Marca pausas dramaticas con [pausa] donde corresponda dentro del texto de 'guion'.\n5. Enfasis: marca con [enfasis] las palabras o frases clave donde la voz deberia subir el tono o bajar la velocidad.\n6. Personalidad: el guion debe tener un punto de vista unico. Prohibido el formato generico tipo 'X tips para Y' o 'X formas de'. Encuentra un angulo propio o una metafora central que lo diferencie.\n7. Cierre (ultima escena, tipo CIERRE): el punto mas impactante del video va al final, no enterrado en el medio. Construye hacia ese momento desde el inicio y conecta con el gancho, dejando una idea que se quede en la cabeza del espectador.\n\nPara prompt_video escribe un prompt cinematografico en ingles en un solo parrafo fluido que cubra en este orden: tipo de plano, sujeto y su apariencia, entorno y ambiente, mood/energia, accion especifica, iluminacion, y estilo visual. No uses corchetes ni etiquetas, solo texto natural listo para pegar en Veo3, Runway o Sora."+charLine+buildChannelStyleLine(config)+"\nPara busqueda_clip genera 3 variantes en ingles para buscar stock footage: 'literal' (accion+contexto+movimiento especifico), 'metaforica' (imagen simbolica que represente la idea sin mostrarla literalmente), y 'textura' (plano de ambiente/textura abstracta como conector visual). IMPORTANTE: mantene coherencia de paleta de color y atmosfera visual entre escenas consecutivas a lo largo de todo el video, como si fueran parte del mismo cortometraje, evitando saltos bruscos de tono."+varLine+"\n\nResponde SOLO en JSON valido:\n{\"titulo\":\"titulo SEO\",\"descripcion\":\"texto 150 palabras\",\"duracion_total\":\""+duration+" minutos\",\"palabras_clave\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"],\"escenas\":[{\"numero\":1,\"tipo\":\"INTRO\",\"titulo_bloque\":\"texto\",\"duracion\":\"X min\",\"guion\":\"minimo 100 palabras, con marcadores [pausa] y [enfasis] donde corresponda\",\"prompt_video\":\"prompt ingles detallado\",\"busqueda_clip\":{\"literal\":\"keyword ingles\",\"metaforica\":\"keyword ingles\",\"textura\":\"keyword ingles\"}}]}\nTipos: INTRO, DESARROLLO, CIERRE. Solo JSON sin markdown.";
       const text=await callClaude(prompt,config);
             const finalScript=parseAIJson(text);
       setScript(finalScript);
@@ -2224,15 +2381,15 @@ function LongFormPage(props){
           <button className="btn bs" style={{width:"100%",justifyContent:"center",marginTop:12}} onClick={downloadAllZip} disabled={zipLoading}>{zipLoading?"⏳ Preparando ZIP...":"📦 Descargar todo (audio + clips, por bloque)"}</button>
         </div>
 
-        {(config.elevenlabsKey||config.geminiKey)?<div className="card">
+        {availableProviders(config).length>0?<div className="card">
           <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>🎙️ Generar audio</div>
-          {config.elevenlabsKey&&config.geminiKey&&<div style={{marginBottom:12}}>
+          {availableProviders(config).length>1&&<div style={{marginBottom:12}}>
             <label className="lbl">Proveedor de voz</label>
             <select className="inp" value={voiceProvider} onChange={function(e){setVoiceProvider(e.target.value);}}>
-              <option value="eleven">ElevenLabs</option>
-              <option value="gemini">Google Gemini</option>
+              {availableProviders(config).map(function(pr){return <option key={pr.code} value={pr.code}>{pr.label}</option>;})}
             </select>
           </div>}
+          <div style={{fontSize:11,color:"#7878a0",marginBottom:10}}>♻️ Si una escena no cambió, se reutiliza el audio ya generado (no gasta créditos).</div>
           {voiceError&&<div className="alert aerr">⚠️ {voiceError}</div>}
           <div className="frow">
             <div className="fi" style={{flex:2}}>
@@ -2248,7 +2405,7 @@ function LongFormPage(props){
             </div>
             <button className="btn bp" onClick={generateAudioFull} disabled={!voiceId}>🎙️ Generar audio de todas las escenas</button>
           </div>
-          {voiceProvider==="gemini"&&voiceId&&<div style={{marginTop:8}}>
+          {voiceProvider!=="eleven"&&voiceId&&<div style={{marginTop:8}}>
             <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={previewVoice} disabled={previewLoading}>{previewLoading?"Generando...":"🔊 Probar esta voz"}</button>
             {previewError&&<div style={{fontSize:12,color:"#e05252",marginTop:6}}>⚠️ {previewError}</div>}
           </div>}
@@ -2298,7 +2455,7 @@ function LongFormPage(props){
             {open===e.numero&&<div>
               <div style={{marginTop:12}}><span className="lbl">Guion</span><div className="stxt">{e.guion}</div><div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><CopyBtn text={e.guion}/></div></div>
 
-              {(config.elevenlabsKey||config.geminiKey)&&voiceId&&<div style={{marginBottom:14}}>
+              {availableProviders(config).length>0&&voiceId&&<div style={{marginBottom:14}}>
                 <button className="btn bs" style={{fontSize:12,padding:"5px 12px"}} onClick={function(){generateAudioForScene(e);}} disabled={genAudioLoading[e.numero]}>{genAudioLoading[e.numero]?"Generando audio...":"🎙️ Generar audio de esta escena"}</button>
                 {genAudio[e.numero]&&<audio controls src={genAudio[e.numero]} style={{width:"100%",marginTop:8}}/>}
               </div>}
@@ -2425,7 +2582,7 @@ export default function App(){
     const activeId=loadActiveChannelId();
     const active=channels.find(function(c){return c.id===activeId;});
     if(!active)return Object.assign({},config,{language:config.language||"es-latam",style:config.style||"reflexivo",niche:config.niche||"",channelName:config.channelName||"",logo:"",ytRefreshToken:""});
-    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name,logo:active.logo||"",ytRefreshToken:active.ytRefreshToken||""});
+    return Object.assign({},config,{language:active.language,style:active.style,niche:active.niche,channelName:active.name,logo:active.logo||"",ytRefreshToken:active.ytRefreshToken||"",channelTone:active.tone||"",channelRhythm:active.rhythm||"",channelPalette:active.palette||""});
   };
   const effectiveConfig=getEffectiveConfig();
 
